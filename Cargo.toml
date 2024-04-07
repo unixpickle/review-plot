@@ -1,0 +1,11 @@
+[package]
+name = "review-plot"
+author = "Alex Nichol"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { version = "1" }
+clap = { version="3", features=["derive"] }
+thirtyfour = "0.32.0"
+tokio = { version = "1", features = ["full"] }
