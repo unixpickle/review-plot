@@ -18,7 +18,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let client = Client::new(&args.driver).await?;
     let results = client
         .search(
-            "Grand Hyatt At SFO",
+            "Grand Hyatt",
             &GeoLocation {
                 latitude: 37.63,
                 longitude: -122.44,
