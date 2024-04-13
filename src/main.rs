@@ -27,5 +27,6 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         )
         .await?;
     println!("got results: {:?}", results);
+    client.close().await?;
     Ok(())
 }

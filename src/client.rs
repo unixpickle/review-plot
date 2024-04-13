@@ -1,3 +1,5 @@
+use std::error::Error;
+use std::fmt::Display;
 use std::ops::Deref;
 use std::time::Duration;
 
@@ -27,6 +29,38 @@ pub enum SearchResult {
     NotFound,
 }
 
+#[derive(Debug)]
+pub enum ScrapeError {
+    WebDriverError(WebDriverError),
+    ParseError(String),
+    TimeoutError(String, Option<Box<ScrapeError>>),
+}
+
+impl From<WebDriverError> for ScrapeError {
+    fn from(value: WebDriverError) -> Self {
+        ScrapeError::WebDriverError(value)
+    }
+}
+
+impl Display for ScrapeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ScrapeError::WebDriverError(e) => write!(f, "WebDriverError({})", e),
+            ScrapeError::ParseError(e) => write!(f, "ParseError({})", e),
+            ScrapeError::TimeoutError(e, Some(x)) => write!(f, "TimeoutError({}, {})", e, x),
+            ScrapeError::TimeoutError(e, None) => write!(f, "TimeoutError({})", e),
+        }
+    }
+}
+
+impl Error for ScrapeError {}
+
+impl ScrapeError {
+    pub fn timeout<S: Display>(msg: S, inner: Option<ScrapeError>) -> Self {
+        ScrapeError::TimeoutError(format!("{}", msg), inner.map(|x| Box::new(x)))
+    }
+}
+
 pub struct Client {
     driver: Mutex<(WebDriver, ChromeDevTools)>,
 }
@@ -45,7 +79,7 @@ impl Client {
         &self,
         search: &str,
         location: &GeoLocation,
-    ) -> anyhow::Result<SearchResult> {
+    ) -> Result<SearchResult, ScrapeError> {
         let unlocked = self.driver.lock().await;
         let (driver, dev_tools) = unlocked.deref();
         set_location(dev_tools, location).await?;
@@ -55,17 +89,26 @@ impl Client {
         query.send_keys(search).await?;
         query.send_keys("\n").await?;
 
-        for _ in 0..5 {
+        let mut last_error: Option<ScrapeError> = None;
+        for _ in 0..10 {
             match decode_search_result(driver).await {
                 Ok(Some(result)) => return Ok(result),
                 Ok(None) => {}
-                Err(WebDriverError::StaleElementReference(_)) => {} // page is still changing
-                Err(x) => return Err(x.into()),
+                Err(ScrapeError::WebDriverError(WebDriverError::StaleElementReference(_))) => {}
+                Err(ScrapeError::WebDriverError(x)) => return Err(x.into()),
+                Err(x) => last_error = Some(x),
             }
             sleep(Duration::from_secs(1)).await;
         }
 
-        Err(anyhow::format_err!("timeout while fetching results"))
+        Err(ScrapeError::timeout(
+            "timeout while fetching results",
+            last_error,
+        ))
+    }
+
+    pub async fn close(&self) -> WebDriverResult<()> {
+        self.driver.lock().await.deref().0.close_window().await
     }
 }
 
@@ -79,7 +122,7 @@ async fn set_location(dev_tools: &ChromeDevTools, location: &GeoLocation) -> Web
         .and_then(|_| Ok(()))
 }
 
-async fn decode_search_result(driver: &WebDriver) -> WebDriverResult<Option<SearchResult>> {
+async fn decode_search_result(driver: &WebDriver) -> Result<Option<SearchResult>, ScrapeError> {
     // See if we are looking at a single result.
     let current_url = driver.current_url().await?.to_string();
     if current_url.contains("/maps/place") {
@@ -92,8 +135,15 @@ async fn decode_search_result(driver: &WebDriver) -> WebDriverResult<Option<Sear
                     name: name,
                     url: current_url,
                 })));
+            } else {
+                return Err(ScrapeError::ParseError(
+                    "missing expected area-label on main content".to_owned(),
+                ));
             }
         }
+        return Err(ScrapeError::ParseError(
+            "no main content was found".to_owned(),
+        ));
     }
 
     // Look for the string indicating no results are found.
