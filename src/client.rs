@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fmt::Display;
+use std::future::Future;
 use std::ops::Deref;
 use std::time::Duration;
 
@@ -89,22 +90,17 @@ impl Client {
         query.send_keys(search).await?;
         query.send_keys("\n").await?;
 
-        let mut last_error: Option<ScrapeError> = None;
-        for _ in 0..10 {
-            match decode_search_result(driver).await {
-                Ok(Some(result)) => return Ok(result),
-                Ok(None) => {}
-                Err(ScrapeError::WebDriverError(WebDriverError::StaleElementReference(_))) => {}
-                Err(ScrapeError::WebDriverError(x)) => return Err(x.into()),
-                Err(x) => last_error = Some(x),
-            }
-            sleep(Duration::from_secs(1)).await;
-        }
+        Ok(wait_for_scrape_result(driver, decode_search_result).await?)
+    }
 
-        Err(ScrapeError::timeout(
-            "timeout while fetching results",
-            last_error,
-        ))
+    pub async fn list_reviews(&self, url: &str, location: &GeoLocation) -> Result<(), ScrapeError> {
+        let unlocked = self.driver.lock().await;
+        let (driver, dev_tools) = unlocked.deref();
+        set_location(dev_tools, location).await?;
+        driver.goto(url).await?;
+        wait_for_scrape_result(driver, click_more_reviews_button).await?;
+        // TODO: parse results.
+        Ok(())
     }
 
     pub async fn close(&self) -> WebDriverResult<()> {
@@ -122,7 +118,31 @@ async fn set_location(dev_tools: &ChromeDevTools, location: &GeoLocation) -> Web
         .and_then(|_| Ok(()))
 }
 
-async fn decode_search_result(driver: &WebDriver) -> Result<Option<SearchResult>, ScrapeError> {
+async fn wait_for_scrape_result<'a, T, Fut, F>(
+    driver: &'a WebDriver,
+    f: F,
+) -> Result<T, ScrapeError>
+where
+    Fut: Future<Output = Result<T, ScrapeError>>,
+    F: Fn(&'a WebDriver) -> Fut,
+{
+    let mut last_error: Option<ScrapeError> = None;
+    for _ in 0..10 {
+        match f(driver).await {
+            Ok(result) => return Ok(result),
+            Err(ScrapeError::WebDriverError(WebDriverError::StaleElementReference(_))) => {}
+            Err(ScrapeError::WebDriverError(x)) => return Err(x.into()),
+            Err(x) => last_error = Some(x),
+        }
+        sleep(Duration::from_secs(1)).await;
+    }
+    Err(ScrapeError::timeout(
+        "timeout while waiting for results",
+        last_error,
+    ))
+}
+
+async fn decode_search_result(driver: &WebDriver) -> Result<SearchResult, ScrapeError> {
     // See if we are looking at a single result.
     let current_url = driver.current_url().await?.to_string();
     if current_url.contains("/maps/place") {
@@ -131,10 +151,10 @@ async fn decode_search_result(driver: &WebDriver) -> Result<Option<SearchResult>
             .await?
         {
             if let Some(name) = x.attr("aria-label").await? {
-                return Ok(Some(SearchResult::Singular(LocationInfo {
+                return Ok(SearchResult::Singular(LocationInfo {
                     name: name,
                     url: current_url,
-                })));
+                }));
             } else {
                 return Err(ScrapeError::ParseError(
                     "missing expected area-label on main content".to_owned(),
@@ -149,7 +169,7 @@ async fn decode_search_result(driver: &WebDriver) -> Result<Option<SearchResult>
     // Look for the string indicating no results are found.
     for x in driver.find_all(By::Tag("div")).await? {
         if x.text().await?.starts_with("Google Maps can't find") {
-            return Ok(Some(SearchResult::NotFound));
+            return Ok(SearchResult::NotFound);
         }
     }
 
@@ -169,8 +189,25 @@ async fn decode_search_result(driver: &WebDriver) -> Result<Option<SearchResult>
                 }
             }
         }
-        return Ok(Some(SearchResult::Multiple(destinations)));
+        return Ok(SearchResult::Multiple(destinations));
     }
 
-    Ok(None)
+    Err(ScrapeError::ParseError(
+        "unable to parse search results".to_owned(),
+    ))
+}
+
+async fn click_more_reviews_button(driver: &WebDriver) -> Result<(), ScrapeError> {
+    for x in driver
+        .find_all(By::XPath(
+            "//*[starts-with(@jsaction, 'pane.reviewChart.moreReviews')]",
+        ))
+        .await?
+    {
+        x.click().await?;
+        return Ok(());
+    }
+    return Err(ScrapeError::ParseError(
+        "no 'more reviews' button found".to_owned(),
+    ));
 }
