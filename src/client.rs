@@ -93,14 +93,48 @@ impl Client {
         Ok(wait_for_scrape_result(driver, decode_search_result).await?)
     }
 
-    pub async fn list_reviews(&self, url: &str, location: &GeoLocation) -> Result<(), ScrapeError> {
+    pub async fn list_reviews(
+        &self,
+        url: &str,
+        location: &GeoLocation,
+    ) -> Result<Vec<String>, ScrapeError> {
         let unlocked = self.driver.lock().await;
         let (driver, dev_tools) = unlocked.deref();
         set_location(dev_tools, location).await?;
+
+        // Intentionally clear any scripts on the page.
+        driver.goto("https://google.com").await?;
         driver.goto(url).await?;
+
+        // Load script that will dump all requests.
+        driver
+            .execute(
+                r#"
+                    const origOpen = XMLHttpRequest.prototype.open;
+                    XMLHttpRequest.prototype.open = function(method, url) {
+                        this._url = url;
+                        return origOpen.apply(this, arguments);
+                    };
+                    const origSend = XMLHttpRequest.prototype.send;
+                    window.recordedReviewResponses = [];
+                    XMLHttpRequest.prototype.send = function() {
+                        const oldCb = this.onreadystatechange;
+                        this.onreadystatechange = function() {
+                            if (this.readyState == 4 && this._url.includes('listugcposts')) {
+                                window.recordedReviewResponses.push(this.response);
+                            }
+                            return oldCb.apply(this, arguments);
+                        };
+                        origSend.apply(this, arguments);
+                    }
+                "#,
+                vec![],
+            )
+            .await?;
         wait_for_scrape_result(driver, click_more_reviews_button).await?;
-        // TODO: parse results.
-        Ok(())
+
+        let reviews = wait_for_scrape_result(driver, get_logged_reviews).await?;
+        Ok(reviews)
     }
 
     pub async fn close(&self) -> WebDriverResult<()> {
@@ -209,5 +243,18 @@ async fn click_more_reviews_button(driver: &WebDriver) -> Result<(), ScrapeError
     }
     return Err(ScrapeError::ParseError(
         "no 'more reviews' button found".to_owned(),
+    ));
+}
+
+async fn get_logged_reviews(driver: &WebDriver) -> Result<Vec<String>, ScrapeError> {
+    let result = driver
+        .execute("return window.recordedReviewResponses", vec![])
+        .await?;
+    let results: Vec<String> = result.convert()?;
+    if results.len() != 0 {
+        return Ok(results);
+    }
+    return Err(ScrapeError::ParseError(
+        "did not find any review HTTP requests".to_owned(),
     ));
 }
