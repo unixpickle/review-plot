@@ -23,6 +23,14 @@ pub struct LocationInfo {
     pub url: String,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Review {
+    pub timestamp: f64,
+    pub author: String,
+    pub content: String,
+    pub star_rating: f64,
+}
+
 #[derive(Debug)]
 pub enum SearchResult {
     Singular(LocationInfo),
@@ -35,11 +43,18 @@ pub enum ScrapeError {
     WebDriverError(WebDriverError),
     ParseError(String),
     TimeoutError(String, Option<Box<ScrapeError>>),
+    JsonError(serde_json::Error),
 }
 
 impl From<WebDriverError> for ScrapeError {
     fn from(value: WebDriverError) -> Self {
         ScrapeError::WebDriverError(value)
+    }
+}
+
+impl From<serde_json::Error> for ScrapeError {
+    fn from(value: serde_json::Error) -> Self {
+        ScrapeError::JsonError(value)
     }
 }
 
@@ -50,6 +65,7 @@ impl Display for ScrapeError {
             ScrapeError::ParseError(e) => write!(f, "ParseError({})", e),
             ScrapeError::TimeoutError(e, Some(x)) => write!(f, "TimeoutError({}, {})", e, x),
             ScrapeError::TimeoutError(e, None) => write!(f, "TimeoutError({})", e),
+            ScrapeError::JsonError(e) => write!(f, "JsonError({})", e),
         }
     }
 }
@@ -59,6 +75,10 @@ impl Error for ScrapeError {}
 impl ScrapeError {
     pub fn timeout<S: Display>(msg: S, inner: Option<ScrapeError>) -> Self {
         ScrapeError::TimeoutError(format!("{}", msg), inner.map(|x| Box::new(x)))
+    }
+
+    pub fn parse_error<S: Display>(msg: S) -> Self {
+        ScrapeError::ParseError(format!("{}", msg))
     }
 }
 
@@ -190,14 +210,12 @@ async fn decode_search_result(driver: &WebDriver) -> Result<SearchResult, Scrape
                     url: current_url,
                 }));
             } else {
-                return Err(ScrapeError::ParseError(
-                    "missing expected area-label on main content".to_owned(),
+                return Err(ScrapeError::parse_error(
+                    "missing expected area-label on main content",
                 ));
             }
         }
-        return Err(ScrapeError::ParseError(
-            "no main content was found".to_owned(),
-        ));
+        return Err(ScrapeError::parse_error("no main content was found"));
     }
 
     // Look for the string indicating no results are found.
@@ -226,9 +244,7 @@ async fn decode_search_result(driver: &WebDriver) -> Result<SearchResult, Scrape
         return Ok(SearchResult::Multiple(destinations));
     }
 
-    Err(ScrapeError::ParseError(
-        "unable to parse search results".to_owned(),
-    ))
+    Err(ScrapeError::parse_error("unable to parse search results"))
 }
 
 async fn click_more_reviews_button(driver: &WebDriver) -> Result<(), ScrapeError> {
@@ -241,9 +257,7 @@ async fn click_more_reviews_button(driver: &WebDriver) -> Result<(), ScrapeError
         x.click().await?;
         return Ok(());
     }
-    return Err(ScrapeError::ParseError(
-        "no 'more reviews' button found".to_owned(),
-    ));
+    return Err(ScrapeError::parse_error("no 'more reviews' button found"));
 }
 
 async fn get_logged_reviews(driver: &WebDriver) -> Result<Vec<String>, ScrapeError> {
@@ -254,7 +268,133 @@ async fn get_logged_reviews(driver: &WebDriver) -> Result<Vec<String>, ScrapeErr
     if results.len() != 0 {
         return Ok(results);
     }
-    return Err(ScrapeError::ParseError(
-        "did not find any review HTTP requests".to_owned(),
+    return Err(ScrapeError::parse_error(
+        "did not find any review HTTP requests",
     ));
+}
+
+fn parse_logged_reviews(response: &str) -> Result<Vec<Review>, ScrapeError> {
+    let newline_index = response
+        .split('\n')
+        .last()
+        .ok_or_else(|| ScrapeError::parse_error("expected newline in reviews"))?;
+    let results: serde_json::Value = serde_json::from_str(newline_index)?;
+    let items = as_array("root list", &results)?;
+    let mut reviews = Vec::new();
+    for (i, x) in items.into_iter().enumerate() {
+        if x.is_null() {
+            continue;
+        }
+        let review_lists = as_array(format!("root index {} should be array or null", i), x)?;
+        for (i, x) in review_lists.into_iter().enumerate() {
+            let data_list = get_array_index(
+                &format!("review list entry {} should be array with a value", i),
+                x,
+                0,
+            )?;
+            let data_list_err = format!("review list entry {} has bad data list", i);
+            let review_metadata = get_array_index(&data_list_err, data_list, 1)?;
+            let metadata_err = format!("review list entry {} has bad metadata", i);
+            let review_timestamp = as_number(
+                &metadata_err,
+                get_array_index(&metadata_err, review_metadata, 2)?,
+            )?;
+            let review_author = as_string(
+                &metadata_err,
+                get_array_index(
+                    &metadata_err,
+                    get_array_index(
+                        &metadata_err,
+                        get_array_index(&metadata_err, review_metadata, 4)?,
+                        0,
+                    )?,
+                    4,
+                )?,
+            )?
+            .to_owned();
+            let review_content = get_array_index(&data_list_err, data_list, 2)?;
+            let star_err = format!("review list entry {} invalid stars", i);
+            let review_stars = as_number(
+                &star_err,
+                get_array_index(&star_err, get_array_index(&star_err, review_content, 0)?, 0)?,
+            )?;
+            let text_err = format!("review list entry {} invalid text", i);
+            let review_text = as_string(
+                &text_err,
+                get_array_index(
+                    &text_err,
+                    get_array_index(
+                        &text_err,
+                        get_array_index(&text_err, review_content, -1)?,
+                        0,
+                    )?,
+                    0,
+                )?,
+            )?
+            .to_owned();
+            reviews.push(Review {
+                timestamp: review_timestamp / 1000000.0,
+                author: review_author,
+                content: review_text,
+                star_rating: review_stars,
+            });
+        }
+    }
+    Ok(reviews)
+}
+
+fn as_string<D: Display>(err_ctx: D, x: &serde_json::Value) -> Result<&str, ScrapeError> {
+    if let serde_json::Value::String(x) = x {
+        Ok(x)
+    } else {
+        Err(ScrapeError::ParseError(format!(
+            "expected JSON string: {}",
+            err_ctx
+        )))
+    }
+}
+
+fn as_number<D: Display>(err_ctx: D, x: &serde_json::Value) -> Result<f64, ScrapeError> {
+    if let serde_json::Value::Number(x) = x {
+        Ok(x.as_f64().unwrap_or_default())
+    } else {
+        Err(ScrapeError::ParseError(format!(
+            "expected JSON string: {}",
+            err_ctx
+        )))
+    }
+}
+
+fn as_array<D: Display>(
+    err_ctx: D,
+    x: &serde_json::Value,
+) -> Result<&[serde_json::Value], ScrapeError> {
+    if let serde_json::Value::Array(x) = x {
+        Ok(x)
+    } else {
+        Err(ScrapeError::ParseError(format!(
+            "expected JSON array: {}",
+            err_ctx
+        )))
+    }
+}
+
+fn get_array_index<'a, D: Display>(
+    err_ctx: &D,
+    val: &'a serde_json::Value,
+    index: i32,
+) -> Result<&'a serde_json::Value, ScrapeError> {
+    let in_list = as_array(err_ctx, val)?;
+    let i = if index < 0 {
+        index + (in_list.len() as i32)
+    } else {
+        index
+    };
+    if i >= in_list.len() as i32 {
+        return Err(ScrapeError::ParseError(format!(
+            "array index {} out of bounds: {}",
+            i, err_ctx
+        )));
+    }
+    Ok(&in_list[i as usize])
 }
