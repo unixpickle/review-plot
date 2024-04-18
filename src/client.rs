@@ -1,13 +1,11 @@
 use std::error::Error;
 use std::fmt::Display;
 use std::future::Future;
-use std::ops::Deref;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use thirtyfour::extensions::cdp::ChromeDevTools;
 use thirtyfour::prelude::{By, DesiredCapabilities, WebDriver, WebDriverError, WebDriverResult};
-use tokio::sync::Mutex;
 use tokio::time::sleep;
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -83,16 +81,18 @@ impl ScrapeError {
 }
 
 pub struct Client {
-    driver: Mutex<(WebDriver, ChromeDevTools)>,
+    driver: WebDriver,
+    dev_tools: ChromeDevTools,
 }
 
 impl Client {
-    pub async fn new(driver: &str) -> anyhow::Result<Client> {
+    pub async fn new(driver: &str) -> WebDriverResult<Client> {
         let caps = DesiredCapabilities::chrome();
         let driver = WebDriver::new(driver, caps).await?;
         let tools = ChromeDevTools::new(driver.handle.clone());
         Ok(Client {
-            driver: Mutex::new((driver, tools)),
+            driver: driver,
+            dev_tools: tools,
         })
     }
 
@@ -101,16 +101,14 @@ impl Client {
         search: &str,
         location: &GeoLocation,
     ) -> Result<SearchResult, ScrapeError> {
-        let unlocked = self.driver.lock().await;
-        let (driver, dev_tools) = unlocked.deref();
-        set_location(dev_tools, location).await?;
-        driver.goto("https://www.google.com/maps").await?;
-        let query = driver.find(By::Name("q")).await?;
+        set_location(&self.dev_tools, location).await?;
+        self.driver.goto("https://www.google.com/maps").await?;
+        let query = self.driver.find(By::Name("q")).await?;
         query.focus().await?;
         query.send_keys(search).await?;
         query.send_keys("\n").await?;
 
-        Ok(wait_for_scrape_result(driver, decode_search_result).await?)
+        Ok(wait_for_scrape_result(&self.driver, decode_search_result).await?)
     }
 
     pub async fn list_reviews(
@@ -118,16 +116,14 @@ impl Client {
         url: &str,
         location: &GeoLocation,
     ) -> Result<Vec<String>, ScrapeError> {
-        let unlocked = self.driver.lock().await;
-        let (driver, dev_tools) = unlocked.deref();
-        set_location(dev_tools, location).await?;
+        set_location(&self.dev_tools, location).await?;
 
         // Intentionally clear any scripts on the page.
-        driver.goto("https://google.com").await?;
-        driver.goto(url).await?;
+        self.driver.goto("https://google.com").await?;
+        self.driver.goto(url).await?;
 
         // Load script that will dump all requests.
-        driver
+        self.driver
             .execute(
                 r#"
                     const origOpen = XMLHttpRequest.prototype.open;
@@ -151,14 +147,14 @@ impl Client {
                 vec![],
             )
             .await?;
-        wait_for_scrape_result(driver, click_more_reviews_button).await?;
+        wait_for_scrape_result(&self.driver, click_more_reviews_button).await?;
 
-        let reviews = wait_for_scrape_result(driver, get_logged_reviews).await?;
+        let reviews = wait_for_scrape_result(&self.driver, get_logged_reviews).await?;
         Ok(reviews)
     }
 
     pub async fn close(&self) -> WebDriverResult<()> {
-        self.driver.lock().await.deref().0.close_window().await
+        self.driver.close_window().await
     }
 }
 

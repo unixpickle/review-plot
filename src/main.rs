@@ -3,6 +3,7 @@ use std::error::Error;
 use clap::Parser;
 
 mod client;
+mod client_pool;
 use client::{Client, GeoLocation, SearchResult};
 
 #[derive(Parser, Clone)]
