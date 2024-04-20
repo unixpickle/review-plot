@@ -115,7 +115,7 @@ impl Client {
         &self,
         url: &str,
         location: &GeoLocation,
-    ) -> Result<Vec<String>, ScrapeError> {
+    ) -> Result<Vec<Review>, ScrapeError> {
         set_location(&self.dev_tools, location).await?;
 
         // Intentionally clear any scripts on the page.
@@ -244,25 +244,43 @@ async fn decode_search_result(driver: &WebDriver) -> Result<SearchResult, Scrape
 }
 
 async fn click_more_reviews_button(driver: &WebDriver) -> Result<(), ScrapeError> {
-    for x in driver
-        .find_all(By::XPath(
-            "//*[starts-with(@jsaction, 'pane.reviewChart.moreReviews')]",
-        ))
+    // Click the 'more reviews' button even if it's offscreen by using
+    // javascript instead of the click() function.
+    let result: bool = driver
+        .execute(
+            r#"
+                let buttons = Array.from(document.getElementsByTagName('button')).filter((x) => {
+                    return x.getAttribute('jsaction') == 'pane.reviewChart.moreReviews';
+                });
+                if (buttons.length) {
+                    buttons[0].click();
+                    return true;
+                } else {
+                    return false;
+                }
+            "#,
+            vec![],
+        )
         .await?
-    {
-        x.click().await?;
-        return Ok(());
+        .convert()?;
+    if result {
+        Ok(())
+    } else {
+        Err(ScrapeError::parse_error("no 'more reviews' button found"))
     }
-    return Err(ScrapeError::parse_error("no 'more reviews' button found"));
 }
 
-async fn get_logged_reviews(driver: &WebDriver) -> Result<Vec<String>, ScrapeError> {
+async fn get_logged_reviews(driver: &WebDriver) -> Result<Vec<Review>, ScrapeError> {
     let result = driver
         .execute("return window.recordedReviewResponses", vec![])
         .await?;
     let results: Vec<String> = result.convert()?;
     if results.len() != 0 {
-        return Ok(results);
+        let mut parsed = Vec::new();
+        for result in results {
+            parsed.extend(parse_logged_reviews(&result)?);
+        }
+        return Ok(parsed);
     }
     return Err(ScrapeError::parse_error(
         "did not find any review HTTP requests",
@@ -281,7 +299,10 @@ fn parse_logged_reviews(response: &str) -> Result<Vec<Review>, ScrapeError> {
         if x.is_null() {
             continue;
         }
-        let review_lists = as_array(format!("root index {} should be array or null", i), x)?;
+        let review_lists = as_array(
+            format!("root index {} should be array or null, got {:?}", i, x),
+            x,
+        )?;
         for (i, x) in review_lists.into_iter().enumerate() {
             let data_list = get_array_index(
                 &format!("review list entry {} should be array with a value", i),
