@@ -296,7 +296,7 @@ fn parse_logged_reviews(response: &str) -> Result<Vec<Review>, ScrapeError> {
     let items = as_array("root list", &results)?;
     let mut reviews = Vec::new();
     for (i, x) in items.into_iter().enumerate() {
-        if x.is_null() {
+        if x.is_null() || x.is_string() {
             continue;
         }
         let review_lists = as_array(

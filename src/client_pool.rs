@@ -9,95 +9,91 @@ use super::client::Client;
 use thirtyfour::error::WebDriverResult;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
-pub struct ClientPool {
-    inner: Arc<Mutex<ClientPoolInner>>,
+pub async fn new_client_pool(capacity: usize, driver: &str) -> WebDriverResult<ObjectPool<Client>> {
+    let mut objs = Vec::new();
+    for _ in 0..capacity {
+        let obj = Client::new(driver).await?;
+        objs.push(obj);
+    }
+    Ok(ObjectPool {
+        inner: Arc::new(Mutex::new(ObjectPoolInner {
+            waiting: VecDeque::new(),
+            free: objs,
+        })),
+    })
 }
 
-impl ClientPool {
-    pub async fn new(capacity: usize, driver: &str) -> WebDriverResult<Self> {
-        let mut clients = Vec::new();
-        for _ in 0..capacity {
-            let client = Client::new(driver).await?;
-            clients.push(client);
-        }
-        Ok(ClientPool {
-            inner: Arc::new(Mutex::new(ClientPoolInner {
-                waiting: VecDeque::new(),
-                free: clients,
-            })),
-        })
-    }
+pub struct ObjectPool<T> {
+    inner: Arc<Mutex<ObjectPoolInner<T>>>,
+}
 
-    pub async fn get_client(&self) -> ClientHandle {
+impl<T> ObjectPool<T> {
+    pub async fn get(&self) -> PoolHandle<T> {
         let (tx, rx) = channel(1);
         let tx_arc = Arc::new(tx);
         {
             let mut inner = self.inner.lock().unwrap();
-            if let Some(client) = inner.free.pop() {
+            if let Some(obj) = inner.free.pop() {
                 drop(inner);
-                return ClientHandle {
+                return PoolHandle {
                     pool_inner: self.inner.clone(),
-                    client: Some(client),
+                    obj: Some(obj),
                 };
             }
             inner.waiting.push_back(tx_arc.clone());
         }
-        let mut waiter = ClientWaiter::new(self.inner.clone(), tx_arc, rx);
+        let mut waiter = PoolWaiter::new(self.inner.clone(), tx_arc, rx);
         waiter.recv().await
     }
 }
 
-pub struct ClientHandle {
-    pool_inner: Arc<Mutex<ClientPoolInner>>,
-    client: Option<Client>,
+pub struct PoolHandle<T> {
+    pool_inner: Arc<Mutex<ObjectPoolInner<T>>>,
+    obj: Option<T>,
 }
 
-impl Drop for ClientHandle {
+impl<T> Drop for PoolHandle<T> {
     fn drop(&mut self) {
-        let client = take(&mut self.client).unwrap();
+        let obj = take(&mut self.obj).unwrap();
         let mut inner = self.pool_inner.lock().unwrap();
-        inner.return_client(client);
+        inner.return_object(obj);
     }
 }
 
-impl Deref for ClientHandle {
-    type Target = Client;
+impl<T> Deref for PoolHandle<T> {
+    type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        self.client.as_ref().unwrap()
+        self.obj.as_ref().unwrap()
     }
 }
 
-struct ClientWaiter {
-    pool: Arc<Mutex<ClientPoolInner>>,
-    tx: Arc<Sender<Client>>,
-    rx: Option<Receiver<Client>>,
+struct PoolWaiter<T> {
+    pool: Arc<Mutex<ObjectPoolInner<T>>>,
+    tx: Arc<Sender<T>>,
+    rx: Option<Receiver<T>>,
 }
 
-impl ClientWaiter {
-    pub fn new(
-        pool: Arc<Mutex<ClientPoolInner>>,
-        tx: Arc<Sender<Client>>,
-        rx: Receiver<Client>,
-    ) -> Self {
-        ClientWaiter {
+impl<T> PoolWaiter<T> {
+    pub fn new(pool: Arc<Mutex<ObjectPoolInner<T>>>, tx: Arc<Sender<T>>, rx: Receiver<T>) -> Self {
+        PoolWaiter {
             pool: pool,
             tx: tx,
             rx: Some(rx),
         }
     }
 
-    pub async fn recv(&mut self) -> ClientHandle {
-        let client = self.rx.as_mut().unwrap().recv().await.unwrap();
+    pub async fn recv(&mut self) -> PoolHandle<T> {
+        let obj = self.rx.as_mut().unwrap().recv().await.unwrap();
         self.rx = None;
-        ClientHandle {
+        PoolHandle {
             pool_inner: self.pool.clone(),
-            client: Some(client),
+            obj: Some(obj),
         }
     }
 }
 
-impl Drop for ClientWaiter {
+impl<T> Drop for PoolWaiter<T> {
     fn drop(&mut self) {
         if let Some(mut rx) = take(&mut self.rx) {
             let mut inner = self.pool.lock().unwrap();
@@ -112,29 +108,29 @@ impl Drop for ClientWaiter {
                 i += 1;
             }
 
-            // We might have been sent a client but never received
+            // We might have been sent a object but never received
             // it, in which case we should free it.
-            if let Ok(client) = rx.try_recv() {
-                inner.return_client(client);
+            if let Ok(obj) = rx.try_recv() {
+                inner.return_object(obj);
             }
         }
     }
 }
 
-struct ClientPoolInner {
-    waiting: VecDeque<Arc<Sender<Client>>>,
-    free: Vec<Client>,
+struct ObjectPoolInner<T> {
+    waiting: VecDeque<Arc<Sender<T>>>,
+    free: Vec<T>,
 }
 
-impl ClientPoolInner {
-    pub fn return_client(&mut self, client: Client) {
+impl<T> ObjectPoolInner<T> {
+    pub fn return_object(&mut self, obj: T) {
         if let Some(waiting) = self.waiting.pop_front() {
             // The buffer should never be full, and the
             // other side of the channel won't be dropped
             // unless it's removed from the waiting queue.
-            waiting.try_send(client).unwrap();
+            waiting.try_send(obj).unwrap();
         } else {
-            self.free.push(client);
+            self.free.push(obj);
         }
     }
 }
