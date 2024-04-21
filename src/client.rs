@@ -139,7 +139,9 @@ impl Client {
                             if (this.readyState == 4 && this._url.includes('listugcposts')) {
                                 window.recordedReviewResponses.push(this.response);
                             }
-                            return oldCb.apply(this, arguments);
+                            if (oldCb) {
+                                return oldCb.apply(this, arguments);
+                            }
                         };
                         origSend.apply(this, arguments);
                     }
@@ -288,11 +290,11 @@ async fn get_logged_reviews(driver: &WebDriver) -> Result<Vec<Review>, ScrapeErr
 }
 
 fn parse_logged_reviews(response: &str) -> Result<Vec<Review>, ScrapeError> {
-    let newline_index = response
+    let last_line = response
         .split('\n')
         .last()
         .ok_or_else(|| ScrapeError::parse_error("expected newline in reviews"))?;
-    let results: serde_json::Value = serde_json::from_str(newline_index)?;
+    let results: serde_json::Value = serde_json::from_str(last_line)?;
     let items = as_array("root list", &results)?;
     let mut reviews = Vec::new();
     for (i, x) in items.into_iter().enumerate() {
@@ -300,7 +302,10 @@ fn parse_logged_reviews(response: &str) -> Result<Vec<Review>, ScrapeError> {
             continue;
         }
         let review_lists = as_array(
-            format!("root index {} should be array or null, got {:?}", i, x),
+            format!(
+                "root index {} should be array, string, or null; got {:?}",
+                i, x
+            ),
             x,
         )?;
         for (i, x) in review_lists.into_iter().enumerate() {
@@ -331,10 +336,19 @@ fn parse_logged_reviews(response: &str) -> Result<Vec<Review>, ScrapeError> {
             .to_owned();
             let review_content = get_array_index(&data_list_err, data_list, 2)?;
             let star_err = format!("review list entry {} invalid stars", i);
-            let review_stars = as_number(
-                &star_err,
-                get_array_index(&star_err, get_array_index(&star_err, review_content, 0)?, 0)?,
-            )?;
+            let review_stars = if get_array_index(&star_err, review_content, 0)?.is_null() {
+                // This is for reviews from other sites, where we have an object at index
+                // 8 that looks like [null,4,"4/5","0"].
+                as_number(
+                    &star_err,
+                    get_array_index(&star_err, get_array_index(&star_err, review_content, 8)?, 1)?,
+                )?
+            } else {
+                as_number(
+                    &star_err,
+                    get_array_index(&star_err, get_array_index(&star_err, review_content, 0)?, 0)?,
+                )?
+            };
             let text_err = format!("review list entry {} invalid text", i);
             let review_text = as_string(
                 &text_err,
