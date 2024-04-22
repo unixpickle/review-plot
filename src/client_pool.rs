@@ -1,7 +1,7 @@
 use std::{
     collections::VecDeque,
     mem::take,
-    ops::Deref,
+    ops::{Deref, DerefMut},
     sync::{Arc, Mutex},
 };
 
@@ -65,6 +65,12 @@ impl<T> Deref for PoolHandle<T> {
 
     fn deref(&self) -> &Self::Target {
         self.obj.as_ref().unwrap()
+    }
+}
+
+impl<T> DerefMut for PoolHandle<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.obj.as_mut().unwrap()
     }
 }
 

@@ -18,18 +18,24 @@ struct Args {
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let args = Args::parse();
     let pool = new_client_pool(1, &args.driver).await?;
-    let client = pool.get().await;
+    let mut client = pool.get().await;
     let location = GeoLocation {
         latitude: 37.63,
         longitude: -122.44,
         accuracy: 10.0,
     };
-    let results = client.search("Grand Hyatt Tampa Bay", &location).await?;
+    let results = client.search("Death by Taco", &location).await?;
     println!("got results: {:?}", results);
     match results {
         SearchResult::Singular(x) => {
             println!("getting reviews for {}", x.name);
-            println!("{:?}", client.list_reviews(&x.url, &location).await?);
+            let mut count = 0;
+            let mut review_it = client.list_reviews(&x.url, &location).await?;
+            while let Some(result) = review_it.next().await? {
+                println!("{:?}", result);
+                count += result.len();
+                println!("seen {} results so far", count);
+            }
         }
         _ => {}
     }

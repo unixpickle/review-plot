@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::fmt::Display;
 use std::future::Future;
+use std::mem::take;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,12 @@ pub struct Review {
     pub author: String,
     pub content: String,
     pub star_rating: f64,
+}
+
+#[derive(Debug, Default)]
+struct ReviewResult {
+    pub is_final: bool,
+    pub reviews: Vec<Review>,
 }
 
 #[derive(Debug)]
@@ -80,6 +87,43 @@ impl ScrapeError {
     }
 }
 
+pub struct ReviewIter<'a> {
+    client: &'a mut Client,
+    first: ReviewResult,
+    on_first: bool,
+    done: bool,
+}
+
+impl<'a> ReviewIter<'a> {
+    fn new(client: &'a mut Client, first: ReviewResult) -> Self {
+        ReviewIter {
+            client: client,
+            first: first,
+            on_first: true,
+            done: false,
+        }
+    }
+
+    pub async fn next(&mut self) -> Result<Option<Vec<Review>>, ScrapeError> {
+        if self.done {
+            Ok(None)
+        } else if self.on_first {
+            self.on_first = false;
+            let first = take(&mut self.first);
+            if first.is_final {
+                self.done = true;
+            }
+            Ok(Some(first.reviews))
+        } else {
+            let next = self.client.next_reviews().await?;
+            if next.is_final {
+                self.done = true;
+            }
+            Ok(Some(next.reviews))
+        }
+    }
+}
+
 pub struct Client {
     driver: WebDriver,
     dev_tools: ChromeDevTools,
@@ -111,11 +155,11 @@ impl Client {
         Ok(wait_for_scrape_result(&self.driver, decode_search_result).await?)
     }
 
-    pub async fn list_reviews(
-        &self,
+    pub async fn list_reviews<'a>(
+        &'a mut self,
         url: &str,
         location: &GeoLocation,
-    ) -> Result<Vec<Review>, ScrapeError> {
+    ) -> Result<ReviewIter<'a>, ScrapeError> {
         set_location(&self.dev_tools, location).await?;
 
         // Intentionally clear any scripts on the page.
@@ -152,7 +196,29 @@ impl Client {
         wait_for_scrape_result(&self.driver, click_more_reviews_button).await?;
 
         let reviews = wait_for_scrape_result(&self.driver, get_logged_reviews).await?;
-        Ok(reviews)
+        Ok(ReviewIter::new(self, reviews))
+    }
+
+    async fn next_reviews(&self) -> Result<ReviewResult, ScrapeError> {
+        self.driver
+            .execute("window.recordedReviewResponses = [];", vec![])
+            .await?;
+        let scroll_code = r#"
+            const allDivs = Array.from(document.getElementsByTagName('div'));
+            const reviewItems = allDivs.filter((x) => !!x.getAttribute('data-review-id'));
+            const reviewContainer = reviewItems[0].parentElement.parentElement;
+            reviewContainer.scrollTop = 10000000;
+        "#;
+        self.driver.execute(scroll_code, vec![]).await?;
+        if let Ok(next) = wait_for_scrape_result(&self.driver, get_logged_reviews).await {
+            Ok(next)
+        } else {
+            // Try to scroll one more time, since sometimes
+            // images took a while to load and prevented the
+            // scroll from triggering a reload.
+            self.driver.execute(scroll_code, vec![]).await?;
+            wait_for_scrape_result(&self.driver, get_logged_reviews).await
+        }
     }
 
     pub async fn close(&self) -> WebDriverResult<()> {
@@ -272,24 +338,32 @@ async fn click_more_reviews_button(driver: &WebDriver) -> Result<(), ScrapeError
     }
 }
 
-async fn get_logged_reviews(driver: &WebDriver) -> Result<Vec<Review>, ScrapeError> {
+async fn get_logged_reviews(driver: &WebDriver) -> Result<ReviewResult, ScrapeError> {
     let result = driver
         .execute("return window.recordedReviewResponses", vec![])
         .await?;
     let results: Vec<String> = result.convert()?;
+    let mut is_final: bool = false;
     if results.len() != 0 {
         let mut parsed = Vec::new();
         for result in results {
-            parsed.extend(parse_logged_reviews(&result)?);
+            let parsed_result = parse_logged_reviews(&result)?;
+            if parsed_result.is_final {
+                is_final = true;
+            }
+            parsed.extend(parsed_result.reviews);
         }
-        return Ok(parsed);
+        return Ok(ReviewResult {
+            is_final: is_final,
+            reviews: parsed,
+        });
     }
     return Err(ScrapeError::parse_error(
         "did not find any review HTTP requests",
     ));
 }
 
-fn parse_logged_reviews(response: &str) -> Result<Vec<Review>, ScrapeError> {
+fn parse_logged_reviews(response: &str) -> Result<ReviewResult, ScrapeError> {
     let last_line = response
         .split('\n')
         .last()
@@ -297,6 +371,7 @@ fn parse_logged_reviews(response: &str) -> Result<Vec<Review>, ScrapeError> {
     let results: serde_json::Value = serde_json::from_str(last_line)?;
     let items = as_array("root list", &results)?;
     let mut reviews = Vec::new();
+    let is_final: bool = items[1].is_null();
     for (i, x) in items.into_iter().enumerate() {
         if x.is_null() || x.is_string() {
             continue;
@@ -371,7 +446,10 @@ fn parse_logged_reviews(response: &str) -> Result<Vec<Review>, ScrapeError> {
             });
         }
     }
-    Ok(reviews)
+    Ok(ReviewResult {
+        is_final: is_final,
+        reviews: reviews,
+    })
 }
 
 fn as_string<D: Display>(err_ctx: D, x: &serde_json::Value) -> Result<&str, ScrapeError> {
