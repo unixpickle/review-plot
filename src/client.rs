@@ -47,6 +47,7 @@ pub enum SearchResult {
 pub enum ScrapeError {
     WebDriverError(WebDriverError),
     ParseError(String),
+    FatalParseError(String),
     TimeoutError(String, Option<Box<ScrapeError>>),
     JsonError(serde_json::Error),
 }
@@ -68,6 +69,7 @@ impl Display for ScrapeError {
         match self {
             ScrapeError::WebDriverError(e) => write!(f, "WebDriverError({})", e),
             ScrapeError::ParseError(e) => write!(f, "ParseError({})", e),
+            ScrapeError::FatalParseError(e) => write!(f, "FatalParseError({})", e),
             ScrapeError::TimeoutError(e, Some(x)) => write!(f, "TimeoutError({}, {})", e, x),
             ScrapeError::TimeoutError(e, None) => write!(f, "TimeoutError({})", e),
             ScrapeError::JsonError(e) => write!(f, "JsonError({})", e),
@@ -84,6 +86,10 @@ impl ScrapeError {
 
     pub fn parse_error<S: Display>(msg: S) -> Self {
         ScrapeError::ParseError(format!("{}", msg))
+    }
+
+    pub fn fatal_parse_error<S: Display>(msg: S) -> Self {
+        ScrapeError::FatalParseError(format!("{}", msg))
     }
 }
 
@@ -250,6 +256,7 @@ where
             Ok(result) => return Ok(result),
             Err(ScrapeError::WebDriverError(WebDriverError::StaleElementReference(_))) => {}
             Err(ScrapeError::WebDriverError(x)) => return Err(x.into()),
+            Err(e @ ScrapeError::FatalParseError(_)) => return Err(e),
             Err(x) => last_error = Some(x),
         }
         sleep(Duration::from_secs(1)).await;
@@ -367,7 +374,7 @@ fn parse_logged_reviews(response: &str) -> Result<ReviewResult, ScrapeError> {
     let last_line = response
         .split('\n')
         .last()
-        .ok_or_else(|| ScrapeError::parse_error("expected newline in reviews"))?;
+        .ok_or_else(|| ScrapeError::fatal_parse_error("expected newline in reviews"))?;
     let results: serde_json::Value = serde_json::from_str(last_line)?;
     let items = as_array("root list", &results)?;
     let mut reviews = Vec::new();
@@ -476,7 +483,7 @@ fn as_string<D: Display>(err_ctx: D, x: &serde_json::Value) -> Result<&str, Scra
     if let serde_json::Value::String(x) = x {
         Ok(x)
     } else {
-        Err(ScrapeError::ParseError(format!(
+        Err(ScrapeError::FatalParseError(format!(
             "expected JSON string: {}",
             err_ctx
         )))
@@ -487,7 +494,7 @@ fn as_number<D: Display>(err_ctx: D, x: &serde_json::Value) -> Result<f64, Scrap
     if let serde_json::Value::Number(x) = x {
         Ok(x.as_f64().unwrap_or_default())
     } else {
-        Err(ScrapeError::ParseError(format!(
+        Err(ScrapeError::FatalParseError(format!(
             "expected JSON string: {}",
             err_ctx
         )))
@@ -501,7 +508,7 @@ fn as_array<D: Display>(
     if let serde_json::Value::Array(x) = x {
         Ok(x)
     } else {
-        Err(ScrapeError::ParseError(format!(
+        Err(ScrapeError::FatalParseError(format!(
             "expected JSON array: {}",
             err_ctx
         )))
@@ -520,7 +527,7 @@ fn get_array_index<'a, D: Display>(
         index
     };
     if i >= in_list.len() as i32 {
-        return Err(ScrapeError::ParseError(format!(
+        return Err(ScrapeError::FatalParseError(format!(
             "array index {} out of bounds: {}",
             i, err_ctx
         )));

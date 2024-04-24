@@ -4,8 +4,8 @@ use clap::Parser;
 
 mod client;
 mod client_pool;
-use client::{GeoLocation, SearchResult};
-use client_pool::new_client_pool;
+use client::{Client, GeoLocation, SearchResult};
+use client_pool::{new_client_pool, ObjectPool};
 
 #[derive(Parser, Clone)]
 #[clap(author, version, about, long_about = None)]
@@ -18,6 +18,16 @@ struct Args {
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let args = Args::parse();
     let pool = new_client_pool(1, &args.driver).await?;
+    let result = entrypoint(&pool).await;
+
+    for client in pool.drain().await {
+        client.close().await?;
+    }
+
+    result
+}
+
+async fn entrypoint(pool: &ObjectPool<Client>) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut client = pool.get().await;
     let location = GeoLocation {
         latitude: 37.63,
@@ -39,6 +49,5 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
         _ => {}
     }
-    client.close().await?;
     Ok(())
 }
