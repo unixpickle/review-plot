@@ -424,20 +424,40 @@ fn parse_logged_reviews(response: &str) -> Result<ReviewResult, ScrapeError> {
                     get_array_index(&star_err, get_array_index(&star_err, review_content, 0)?, 0)?,
                 )?
             };
-            let text_err = format!("review list entry {} invalid text", i);
-            let review_text = as_string(
-                &text_err,
-                get_array_index(
-                    &text_err,
-                    get_array_index(
+            let review_text_container = get_array_index(
+                &format!("review list entry {} invalid text", i),
+                review_content,
+                -1,
+            )?;
+            let text_err = format!(
+                "review list entry {} invalid text: {}",
+                i, review_text_container,
+            );
+            let review_text = if get_array_index(&text_err, review_text_container, 0)?.is_string() {
+                // Sometimes an empty review's text element is just ["en"] instead of containing
+                // the actual review text.
+                "".to_owned()
+            } else {
+                // We ignore errors here because there are a few different types
+                // of reviews. By default we will get some text, but we could also
+                // get a review_text_container like this:
+                //
+                //     "[[[\"GUIDED_DINING_MODE\"],\"Did you dine in, take out, or get delivery?\",[[[[\"E:DINE_IN\"],\"Dine in\",2,null,null,\"0ahUKEwip-ama_NOFAxWoClcBHdn9BlYQ3YcHCDUoAA\",null,null,0]],1],null,null,\"Service\",null,\"0ahUKEwip-ama_NOFAxWoClcBHdn9BlYQ3IcHCDQoBw\",null,null,null,null,null,1],[[\"GUIDED_DINING_MEAL_TYPE\"],\"What did you get?\",[[[[\"E:LUNCH\"],\"Lunch\",2,null,null,\"0ahUKEwip-ama_NOFAxWoClcBHdn9BlYQ3YcHCDcoAA\",null,null,0]],1],null,null,\"Meal type\",null,\"0ahUKEwip-ama_NOFAxWoClcBHdn9BlYQ3IcHCDYoCA\",null,null,null,null,null,1],[[\"GUIDED_DINING_PRICE_RANGE\"],\"How much did you spend per person?\",[[[[\"E:USD_30_TO_50\"],\"$30–50\",2,null,\"$30 to $50\",\"0ahUKEwip-ama_NOFAxWoClcBHdn9BlYQ3YcHCDkoAA\"]],1],null,null,\"Price per person\",null,\"0ahUKEwip-ama_NOFAxWoClcBHdn9BlYQ3IcHCDgoCQ\",null,null,null,null,null,1,[[2]]]]"
+                //
+                // Or one like this: "[4]"
+                || -> Result<String, ScrapeError> {
+                    Ok(as_string(
                         &text_err,
-                        get_array_index(&text_err, review_content, -1)?,
-                        0,
-                    )?,
-                    0,
-                )?,
-            )?
-            .to_owned();
+                        get_array_index(
+                            &text_err,
+                            get_array_index(&text_err, review_text_container, 0)?,
+                            0,
+                        )?,
+                    )?
+                    .to_owned())
+                }()
+                .unwrap_or_default()
+            };
             reviews.push(Review {
                 timestamp: review_timestamp / 1000000.0,
                 author: review_author,
