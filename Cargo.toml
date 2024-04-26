@@ -11,3 +11,8 @@ thirtyfour = "0.32.0"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1" }
 serde_json = { version = "1" }
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1" }
+http-body-util = { version = "0.1" }
+url = { version = "2" }
+bytes = { version = "1" }
