@@ -1,7 +1,9 @@
 use std::{
     collections::VecDeque,
-    marker::PhantomData,
-    mem::take,
+    error::Error,
+    fmt::Display,
+    future::Future,
+    mem::{swap, take},
     ops::{Deref, DerefMut},
     sync::{Arc, Mutex},
 };
@@ -9,6 +11,21 @@ use std::{
 use super::client::Client;
 use thirtyfour::error::WebDriverResult;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+
+#[derive(Debug)]
+pub enum PoolError {
+    PoolClosed,
+}
+
+impl Display for PoolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PoolError::PoolClosed => write!(f, "client pool is closed"),
+        }
+    }
+}
+
+impl Error for PoolError {}
 
 pub async fn new_client_pool(capacity: usize, driver: &str) -> WebDriverResult<ObjectPool<Client>> {
     let mut objs = Vec::new();
@@ -18,6 +35,8 @@ pub async fn new_client_pool(capacity: usize, driver: &str) -> WebDriverResult<O
     }
     Ok(ObjectPool {
         inner: Arc::new(Mutex::new(ObjectPoolInner {
+            closed: false,
+            capacity: capacity,
             waiting: VecDeque::new(),
             free: objs,
         })),
@@ -28,24 +47,69 @@ pub struct ObjectPool<T> {
     inner: Arc<Mutex<ObjectPoolInner<T>>>,
 }
 
+impl<T> Clone for ObjectPool<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
 impl<T> ObjectPool<T> {
-    pub async fn get<'a>(&'a self) -> PoolHandle<'a, T> {
+    pub async fn get(&self) -> Result<PoolHandle<T>, PoolError> {
         let (tx, rx) = channel(1);
         let tx_arc = Arc::new(tx);
         {
             let mut inner = self.inner.lock().unwrap();
+            if inner.closed {
+                return Err(PoolError::PoolClosed);
+            }
             if let Some(obj) = inner.free.pop() {
                 drop(inner);
-                return PoolHandle {
+                return Ok(PoolHandle {
                     pool_inner: self.inner.clone(),
                     obj: Some(obj),
-                    phantom: PhantomData,
-                };
+                });
             }
             inner.waiting.push_back(tx_arc.clone());
         }
-        let mut waiter = PoolWaiter::<'a, T>::new(self.inner.clone(), tx_arc, rx);
+        let mut waiter = PoolWaiter::<T>::new(self.inner.clone(), tx_arc, rx);
         waiter.recv().await
+    }
+
+    pub async fn close<F, Fut, E: Error>(&self, f: F) -> Result<(), E>
+    where
+        Fut: Future<Output = Result<(), E>>,
+        F: Fn(T) -> Fut,
+    {
+        let mut free = Vec::new();
+        let mut rx;
+        let tx;
+        let remaining;
+        {
+            let mut inner = self.inner.lock().unwrap();
+            if inner.closed {
+                return Ok(());
+            }
+            inner.closed = true;
+            swap(&mut free, &mut inner.free);
+            remaining = inner.capacity - free.len();
+            inner.waiting.clear();
+            if remaining == 0 {
+                return Ok(());
+            }
+            (tx, rx) = channel(remaining);
+            for _ in 0..remaining {
+                inner.waiting.push_back(Arc::new(tx.clone()));
+            }
+        }
+        for client in free {
+            f(client).await?;
+        }
+        for _ in 0..remaining {
+            f(rx.recv().await.unwrap()).await?;
+        }
+        Ok(())
     }
 
     pub async fn drain(self) -> Vec<T> {
@@ -53,13 +117,12 @@ impl<T> ObjectPool<T> {
     }
 }
 
-pub struct PoolHandle<'a, T> {
+pub struct PoolHandle<T> {
     pool_inner: Arc<Mutex<ObjectPoolInner<T>>>,
     obj: Option<T>,
-    phantom: PhantomData<&'a ObjectPool<T>>,
 }
 
-impl<'a, T> Drop for PoolHandle<'a, T> {
+impl<T> Drop for PoolHandle<T> {
     fn drop(&mut self) {
         let obj = take(&mut self.obj).unwrap();
         let mut inner = self.pool_inner.lock().unwrap();
@@ -67,7 +130,7 @@ impl<'a, T> Drop for PoolHandle<'a, T> {
     }
 }
 
-impl<'a, T> Deref for PoolHandle<'a, T> {
+impl<T> Deref for PoolHandle<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -75,41 +138,44 @@ impl<'a, T> Deref for PoolHandle<'a, T> {
     }
 }
 
-impl<'a, T> DerefMut for PoolHandle<'a, T> {
+impl<T> DerefMut for PoolHandle<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.obj.as_mut().unwrap()
     }
 }
 
-struct PoolWaiter<'a, T> {
+struct PoolWaiter<T> {
     pool: Arc<Mutex<ObjectPoolInner<T>>>,
     tx: Arc<Sender<T>>,
     rx: Option<Receiver<T>>,
-    phantom: PhantomData<&'a ObjectPool<T>>,
 }
 
-impl<'a, T> PoolWaiter<'a, T> {
+impl<T> PoolWaiter<T> {
     pub fn new(pool: Arc<Mutex<ObjectPoolInner<T>>>, tx: Arc<Sender<T>>, rx: Receiver<T>) -> Self {
         PoolWaiter {
             pool: pool,
             tx: tx,
             rx: Some(rx),
-            phantom: PhantomData,
         }
     }
 
-    pub async fn recv(&mut self) -> PoolHandle<'a, T> {
-        let obj = self.rx.as_mut().unwrap().recv().await.unwrap();
+    pub async fn recv(&mut self) -> Result<PoolHandle<T>, PoolError> {
+        let obj = self
+            .rx
+            .as_mut()
+            .unwrap()
+            .recv()
+            .await
+            .ok_or(PoolError::PoolClosed)?;
         self.rx = None;
-        PoolHandle {
+        Ok(PoolHandle {
             pool_inner: self.pool.clone(),
             obj: Some(obj),
-            phantom: self.phantom,
-        }
+        })
     }
 }
 
-impl<'a, T> Drop for PoolWaiter<'a, T> {
+impl<T> Drop for PoolWaiter<T> {
     fn drop(&mut self) {
         if let Some(mut rx) = take(&mut self.rx) {
             let mut inner = self.pool.lock().unwrap();
@@ -134,6 +200,8 @@ impl<'a, T> Drop for PoolWaiter<'a, T> {
 }
 
 struct ObjectPoolInner<T> {
+    closed: bool,
+    capacity: usize,
     waiting: VecDeque<Arc<Sender<T>>>,
     free: Vec<T>,
 }

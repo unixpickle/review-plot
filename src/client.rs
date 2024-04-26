@@ -227,7 +227,7 @@ impl Client {
         }
     }
 
-    pub async fn close(&self) -> WebDriverResult<()> {
+    pub async fn close(self) -> WebDriverResult<()> {
         self.driver.close_window().await
     }
 }

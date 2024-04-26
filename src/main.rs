@@ -28,9 +28,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let pool = new_client_pool(1, &args.driver).await?;
     let result = entrypoint(args, &pool).await;
 
-    for client in pool.drain().await {
-        client.close().await?;
-    }
+    pool.close(|client| client.close()).await?;
 
     result
 }
@@ -56,20 +54,25 @@ async fn entrypoint(
     args: Args,
     pool: &ObjectPool<Client>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let make_service = service_fn(|req: Request<body::Incoming>| async move {
-        if req.uri().path() == "/api/search" {
-            Ok(Response::new(Full::<Bytes>::from("SEARCH RESULTS HERE")))
-        } else if req.uri().path() == "/api/reviews" {
-            Ok(Response::new(Full::<Bytes>::from("REVIEWS RESULTS HERE")))
-        } else {
-            Err(HandlerError::NotFound)
-        }
-    });
-
     let listener = TcpListener::bind(&args.host).await?;
     loop {
         let (tcp, _) = listener.accept().await?;
         let io = TokioIo::new(tcp);
+
+        let local_pool = pool.clone();
+
+        let make_service = service_fn(move |req: Request<body::Incoming>| {
+            let pool = local_pool.clone();
+            async move {
+                if req.uri().path() == "/api/search" {
+                    Ok(Response::new(Full::<Bytes>::from("SEARCH RESULTS HERE")))
+                } else if req.uri().path() == "/api/reviews" {
+                    Ok(Response::new(Full::<Bytes>::from("REVIEWS RESULTS HERE")))
+                } else {
+                    Err(HandlerError::NotFound)
+                }
+            }
+        });
 
         tokio::task::spawn(async move {
             if let Err(err) = http1::Builder::new()
