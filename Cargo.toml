@@ -14,5 +14,6 @@ serde_json = { version = "1" }
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1" }
 http-body-util = { version = "0.1" }
+http = { version = "1" }
 url = { version = "2" }
 bytes = { version = "1" }

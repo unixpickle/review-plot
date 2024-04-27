@@ -2,14 +2,17 @@ use std::{error::Error, fmt::Display};
 
 use bytes::Bytes;
 use clap::Parser;
+use http::response::Builder;
 use http_body_util::Full;
 use hyper::{body, server::conn::http1, service::service_fn, Request, Response};
 
 mod client;
 mod client_pool;
-use client::{Client, GeoLocation, ScrapeError, SearchResult};
-use client_pool::{new_client_pool, ObjectPool};
+use client::{Client, GeoLocation, LocationInfo, ScrapeError, SearchResult};
+use client_pool::{new_client_pool, ObjectPool, PoolError};
 use hyper_util::rt::{TokioIo, TokioTimer};
+use serde::Serialize;
+use serde_json::json;
 use tokio::net::TcpListener;
 
 #[derive(Parser, Clone)]
@@ -18,7 +21,7 @@ struct Args {
     #[clap(long, value_parser, default_value = "http://localhost:9515")]
     driver: String,
 
-    #[clap(long, value_parser, default_value = ":8080")]
+    #[clap(long, value_parser, default_value = "0.0.0.0:8080")]
     host: String,
 }
 
@@ -35,16 +38,28 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
 #[derive(Debug)]
 enum HandlerError {
-    NotFound,
     ScrapeError(ScrapeError),
+    PoolError(PoolError),
 }
 
 impl Display for HandlerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            HandlerError::NotFound => write!(f, "page not found"),
             HandlerError::ScrapeError(e) => write!(f, "ScrapeError({})", e),
+            HandlerError::PoolError(e) => write!(f, "PoolError({})", e),
         }
+    }
+}
+
+impl From<ScrapeError> for HandlerError {
+    fn from(value: ScrapeError) -> Self {
+        HandlerError::ScrapeError(value)
+    }
+}
+
+impl From<PoolError> for HandlerError {
+    fn from(value: PoolError) -> Self {
+        HandlerError::PoolError(value)
     }
 }
 
@@ -65,11 +80,12 @@ async fn entrypoint(
             let pool = local_pool.clone();
             async move {
                 if req.uri().path() == "/api/search" {
-                    Ok(Response::new(Full::<Bytes>::from("SEARCH RESULTS HERE")))
+                    let result = handle_search(pool, req).await;
+                    Ok(api_result_to_response(Response::builder(), result)?)
                 } else if req.uri().path() == "/api/reviews" {
-                    Ok(Response::new(Full::<Bytes>::from("REVIEWS RESULTS HERE")))
+                    Ok(Response::new("REVIEWS RESULTS HERE".into()))
                 } else {
-                    Err(HandlerError::NotFound)
+                    Response::builder().status(404).body("404 not found".into())
                 }
             }
         });
@@ -107,4 +123,45 @@ async fn entrypoint(
     //     _ => {}
     // }
     // Ok(())
+}
+
+async fn handle_search(
+    pool: ObjectPool<Client>,
+    request: Request<body::Incoming>,
+) -> Result<Vec<LocationInfo>, HandlerError> {
+    // TODO: parse arguments from request.
+    _ = request;
+
+    let client = pool.get().await?;
+    let location = GeoLocation {
+        latitude: 37.63,
+        longitude: -122.44,
+        accuracy: 10.0,
+    };
+    Ok(match client.search("Grand Hyatt", &location).await? {
+        SearchResult::NotFound => vec![],
+        SearchResult::Singular(x) => vec![x],
+        SearchResult::Multiple(x) => x,
+    })
+}
+
+fn api_result_to_response<T: Serialize, E: Error + Display>(
+    builder: Builder,
+    result: Result<T, E>,
+) -> Result<Response<Full<Bytes>>, http::Error> {
+    match result {
+        Ok(x) => match serde_json::to_string(&x) {
+            Ok(x) => builder.body(x.into()),
+            Err(x) => builder.status(500).body(
+                serde_json::to_string(&json!({"error": format!("failed to encode result: {}", x)}))
+                    .unwrap()
+                    .into(),
+            ),
+        },
+        Err(x) => builder.body(
+            serde_json::to_string(&json!({"error": format!("{}", x)}))
+                .unwrap()
+                .into(),
+        ),
+    }
 }

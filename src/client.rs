@@ -16,7 +16,7 @@ pub struct GeoLocation {
     pub accuracy: f64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct LocationInfo {
     pub name: String,
     pub url: String,

@@ -95,10 +95,7 @@ impl<T> ObjectPool<T> {
             swap(&mut free, &mut inner.free);
             remaining = inner.capacity - free.len();
             inner.waiting.clear();
-            if remaining == 0 {
-                return Ok(());
-            }
-            (tx, rx) = channel(remaining);
+            (tx, rx) = channel(remaining.max(1));
             for _ in 0..remaining {
                 inner.waiting.push_back(Arc::new(tx.clone()));
             }
@@ -110,10 +107,6 @@ impl<T> ObjectPool<T> {
             f(rx.recv().await.unwrap()).await?;
         }
         Ok(())
-    }
-
-    pub async fn drain(self) -> Vec<T> {
-        take(&mut self.inner.lock().unwrap().free)
     }
 }
 
