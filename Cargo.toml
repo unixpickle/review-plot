@@ -17,3 +17,5 @@ http-body-util = { version = "0.1" }
 http = { version = "1" }
 url = { version = "2" }
 bytes = { version = "1" }
+futures = { version = "0.3" }
+tokio-stream = { version = "0.1" }

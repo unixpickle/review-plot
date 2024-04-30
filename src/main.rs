@@ -1,10 +1,16 @@
-use std::{collections::HashMap, error::Error, fmt::Display, str::FromStr};
+use std::{collections::HashMap, convert::Infallible, error::Error, fmt::Display, str::FromStr};
 
 use bytes::Bytes;
 use clap::Parser;
+use futures::StreamExt;
 use http::response::Builder;
-use http_body_util::Full;
-use hyper::{body, server::conn::http1, service::service_fn, Request, Response};
+use http_body_util::{combinators::BoxBody, Full, StreamBody};
+use hyper::{
+    body::{self, Frame},
+    server::conn::http1,
+    service::service_fn,
+    Request, Response,
+};
 
 mod client;
 mod client_pool;
@@ -13,7 +19,8 @@ use client_pool::{new_client_pool, ObjectPool, PoolError};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use serde::Serialize;
 use serde_json::json;
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::mpsc::channel};
+use tokio_stream::wrappers::ReceiverStream;
 
 #[derive(Parser, Clone)]
 #[clap(author, version, about, long_about = None)]
@@ -40,6 +47,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 enum HandlerError {
     ScrapeError(ScrapeError),
     PoolError(PoolError),
+    HttpError(http::Error),
     QueryError(String),
 }
 
@@ -48,6 +56,7 @@ impl Display for HandlerError {
         match self {
             HandlerError::ScrapeError(e) => write!(f, "ScrapeError({})", e),
             HandlerError::PoolError(e) => write!(f, "PoolError({})", e),
+            HandlerError::HttpError(e) => write!(f, "HttpError({})", e),
             HandlerError::QueryError(e) => write!(f, "QueryError({})", e),
         }
     }
@@ -62,6 +71,12 @@ impl From<ScrapeError> for HandlerError {
 impl From<PoolError> for HandlerError {
     fn from(value: PoolError) -> Self {
         HandlerError::PoolError(value)
+    }
+}
+
+impl From<http::Error> for HandlerError {
+    fn from(value: http::Error) -> Self {
+        HandlerError::HttpError(value)
     }
 }
 
@@ -89,11 +104,19 @@ async fn entrypoint(
             async move {
                 if req.uri().path() == "/api/search" {
                     let result = handle_search(pool, req).await;
-                    Ok(api_result_to_response(Response::builder(), result)?)
+                    api_result_to_response(Response::builder(), result)
                 } else if req.uri().path() == "/api/reviews" {
-                    Ok(Response::new("REVIEWS RESULTS HERE".into()))
+                    match handle_reviews(pool, req).await {
+                        Err(e) => {
+                            api_result_to_response(Response::builder(), Result::<String, _>::Err(e))
+                        }
+                        Ok(x) => Ok(x),
+                    }
                 } else {
-                    Response::builder().status(404).body("404 not found".into())
+                    Ok(static_response(
+                        Response::builder().status(404),
+                        "404 not found",
+                    )?)
                 }
             }
         });
@@ -157,6 +180,61 @@ async fn handle_search(
     )
 }
 
+async fn handle_reviews(
+    pool: ObjectPool<Client>,
+    request: Request<body::Incoming>,
+) -> Result<Response<BoxBody<Bytes, Infallible>>, HandlerError> {
+    let args = Query::parse(&request)?;
+
+    let location = GeoLocation {
+        latitude: args.get("latitude")?,
+        longitude: args.get("longitude")?,
+        accuracy: args.get("accuracy")?,
+    };
+    let url = args.get::<String>("url")?;
+    let mut client = pool.get().await?;
+
+    let (tx, rx) = channel::<Bytes>(1);
+
+    tokio::spawn(async move {
+        match client.list_reviews(&url, &location).await {
+            Err(e) => {
+                tx.send(Bytes::from(
+                    serde_json::to_string(&json!({"error": format!("{}", e)})).unwrap(),
+                ))
+                .await
+                .ok();
+            }
+            Ok(mut it) => loop {
+                match it.next().await {
+                    Err(e) => {
+                        tx.send(Bytes::from(
+                            serde_json::to_string(&json!({"error": format!("{}", e)})).unwrap(),
+                        ))
+                        .await
+                        .ok();
+                        return;
+                    }
+                    Ok(Some(x)) => {
+                        if !tx
+                            .send(Bytes::from(serde_json::to_string(&x).unwrap()))
+                            .await
+                            .is_ok()
+                        {
+                            return;
+                        }
+                    }
+                    Ok(None) => return,
+                }
+            },
+        }
+    });
+
+    Ok(Response::new(BoxBody::new(StreamBody::new(
+        ReceiverStream::from(rx).map(|x| -> Result<_, Infallible> { Ok(Frame::data(x)) }),
+    ))))
+}
+
 struct Query {
     map: HashMap<String, String>,
 }
@@ -191,20 +269,24 @@ impl Query {
 fn api_result_to_response<T: Serialize, E: Error + Display>(
     builder: Builder,
     result: Result<T, E>,
-) -> Result<Response<Full<Bytes>>, http::Error> {
+) -> Result<Response<BoxBody<Bytes, Infallible>>, http::Error> {
     match result {
         Ok(x) => match serde_json::to_string(&x) {
-            Ok(x) => builder.body(x.into()),
-            Err(x) => builder.status(500).body(
+            Ok(x) => builder.body(BoxBody::new(Full::<Bytes>::from(x))),
+            Err(x) => builder.status(500).body(BoxBody::new(Full::<Bytes>::from(
                 serde_json::to_string(&json!({"error": format!("failed to encode result: {}", x)}))
-                    .unwrap()
-                    .into(),
-            ),
+                    .unwrap(),
+            ))),
         },
-        Err(x) => builder.body(
-            serde_json::to_string(&json!({"error": format!("{}", x)}))
-                .unwrap()
-                .into(),
-        ),
+        Err(x) => builder.body(BoxBody::new(Full::<Bytes>::from(
+            serde_json::to_string(&json!({"error": format!("{}", x)})).unwrap(),
+        ))),
     }
+}
+
+fn static_response(
+    builder: Builder,
+    data: &str,
+) -> Result<Response<BoxBody<Bytes, Infallible>>, http::Error> {
+    builder.body(BoxBody::new(Full::<Bytes>::from(data.to_owned())))
 }
