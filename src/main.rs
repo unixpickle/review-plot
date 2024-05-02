@@ -16,14 +16,19 @@ use handlers::{api_result_to_response, handle_reviews, handle_search};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::{net::TcpListener, signal};
 
-const PAGE_MAPPING: [(&'static str, &'static str); 8] = [
+const PAGE_MAPPING: [(&'static str, &'static str); 13] = [
     ("", include_str!("assets/index.html")),
     ("/", include_str!("assets/index.html")),
     ("/404.html", include_str!("assets/404.html")),
     ("/js/app.js", include_str!("assets/js/app.js")),
     ("/js/app.js.map", include_str!("assets/js/app.js.map")),
     ("/ts/app.ts", include_str!("assets/ts/app.ts")),
+    ("/js/search.js", include_str!("assets/js/search.js")),
+    ("/js/search.js.map", include_str!("assets/js/search.js.map")),
+    ("/ts/search.ts", include_str!("assets/ts/search.ts")),
     ("/css/page.css", include_str!("assets/css/page.css")),
+    ("/css/search.css", include_str!("assets/css/search.css")),
+    ("/css/loader.css", include_str!("assets/css/loader.css")),
     ("/css/404.css", include_str!("assets/css/404.css")),
 ];
 
