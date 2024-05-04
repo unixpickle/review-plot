@@ -61,7 +61,8 @@ class PlaceSearch {
             }
             this.currentAbort = new AbortController();
             this.setState('loading');
-            const url = `/api/search?query=${encodeURIComponent(query)}`;
+            const location = window.app.locationQueryString();
+            const url = `/api/search?query=${encodeURIComponent(query)}&${location}`;
             try {
                 const result = yield (yield fetch(url, { signal: this.currentAbort.signal })).json();
                 this.currentAbort = null;
