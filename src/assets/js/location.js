@@ -2,17 +2,17 @@ class LocationPicker {
     constructor() {
         this._element = document.createElement('div');
         this._element.className = 'location-picker';
-        this.latitudeInput = createLabeledInput(this._element, 'Lat', '37.63');
-        this.longitudeInput = createLabeledInput(this._element, 'Lon', '-122.44');
-        this.accuracyInput = createLabeledInput(this._element, 'Acc', '10.0');
+        this.latitude = createLabeledInput(this._element, 'Lat', '37.63');
+        this.longitude = createLabeledInput(this._element, 'Lon', '-122.44');
+        this.accuracy = createLabeledInput(this._element, 'Acc', '10.0');
     }
     element() {
         return this._element;
     }
-    urlQuery() {
-        return (`latitude=${encodeURIComponent(this.latitudeInput.value)}&` +
-            `longitude=${encodeURIComponent(this.longitudeInput.value)}&` +
-            `accuracy=${encodeURIComponent(this.longitudeInput.value)}`);
+    urlEncode() {
+        return (`latitude=${encodeURIComponent(this.latitude.value)}&` +
+            `longitude=${encodeURIComponent(this.longitude.value)}&` +
+            `accuracy=${encodeURIComponent(this.accuracy.value)}`);
     }
 }
 function createLabeledInput(parent, name, defaultVal) {

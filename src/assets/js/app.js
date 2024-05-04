@@ -1,12 +1,12 @@
 class App {
     constructor() {
-        this.search = new PlaceSearch();
-        document.body.appendChild(this.search.element());
         this.locationPicker = new LocationPicker();
         document.body.appendChild(this.locationPicker.element());
+        this.search = new PlaceSearch();
+        document.body.appendChild(this.search.element());
     }
-    locationQueryString() {
-        return this.locationPicker.urlQuery();
+    urlEncodeLocation() {
+        return this.locationPicker.urlEncode();
     }
 }
 window.app = new App();

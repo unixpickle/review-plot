@@ -1,0 +1,22 @@
+.location-picker {
+    display: block;
+    width: 300px;
+    margin: 10px auto;
+}
+
+.location-picker-field {
+    text-align: center;
+    margin: 2px 0;
+}
+
+.location-picker-field label {
+    display: inline-block;
+    width: 80px;
+    text-align: right;
+    margin-right: 2px;
+}
+
+.location-picker-field input {
+    width: 80px;
+    margin-left: 2px;
+}

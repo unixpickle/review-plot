@@ -17,7 +17,7 @@ class PlaceSearch {
         this.searchBox = document.createElement('input');
         this.searchBox.placeholder = 'Name of business';
         this.searchButton = document.createElement('button');
-        this.searchButton.textContent = 'Search';
+        this.searchButton.textContent = '🔎';
         this.searchBox.addEventListener('keyup', (e) => {
             if (e.key === 'Enter' || e.keyCode === 13) {
                 this.lookupResults();
@@ -61,7 +61,7 @@ class PlaceSearch {
             }
             this.currentAbort = new AbortController();
             this.setState('loading');
-            const location = window.app.locationQueryString();
+            const location = window.app.urlEncodeLocation();
             const url = `/api/search?query=${encodeURIComponent(query)}&${location}`;
             try {
                 const result = yield (yield fetch(url, { signal: this.currentAbort.signal })).json();

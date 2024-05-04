@@ -7,14 +7,14 @@ class App {
     private search: PlaceSearch;
 
     constructor() {
-        this.search = new PlaceSearch();
-        document.body.appendChild(this.search.element());
         this.locationPicker = new LocationPicker();
         document.body.appendChild(this.locationPicker.element());
+        this.search = new PlaceSearch();
+        document.body.appendChild(this.search.element());
     }
 
-    locationQueryString(): string {
-        return this.locationPicker.urlQuery();
+    urlEncodeLocation(): string {
+        return this.locationPicker.urlEncode();
     }
 }
 
