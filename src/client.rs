@@ -27,7 +27,7 @@ pub struct Review {
     pub timestamp: f64,
     pub author: String,
     pub content: String,
-    pub star_rating: f64,
+    pub rating: f64,
 }
 
 #[derive(Debug, Default)]
@@ -470,7 +470,7 @@ fn parse_logged_reviews(response: &str) -> Result<ReviewResult, ScrapeError> {
                 timestamp: review_timestamp / 1000000.0,
                 author: review_author,
                 content: review_text,
-                star_rating: review_stars,
+                rating: review_stars,
             });
         }
     }

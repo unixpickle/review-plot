@@ -1,0 +1,48 @@
+.plot {
+    position: relative;
+    display: block;
+    width: 500px;
+    height: 300px;
+    margin: 10px auto;
+}
+
+.plot-dots {
+    position: absolute;
+    top: 0;
+    left: 30px;
+    width: calc(100% - 60px);
+    height: 100%;
+    background-color: #f0f0f0;
+}
+
+.plot-start-date,
+.plot-end-date {
+    line-height: 30px;
+    position: absolute;
+    text-align: center;
+    width: 300px;
+    height: 30px;
+}
+
+.plot-start-date {
+    top: -30px;
+    transform: rotate(90deg);
+    transform-origin: left bottom 0;
+}
+
+.plot-end-date {
+    top: -30px;
+    left: calc(100% - 30px);
+    transform: rotate(90deg);
+    transform-origin: left bottom 0;
+}
+
+.plot-dots-dot {
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    margin-left: -10px;
+    margin-bottom: -10px;
+    border-radius: 10px;
+    background-color: #65dcd4;
+}

@@ -5,12 +5,15 @@ interface Window {
 class App {
     private locationPicker: LocationPicker;
     private search: PlaceSearch;
+    private plot: ReviewPlot;
 
     constructor() {
         this.locationPicker = new LocationPicker();
         document.body.appendChild(this.locationPicker.element());
         this.search = new PlaceSearch();
         document.body.appendChild(this.search.element());
+        this.plot = new ReviewPlot();
+        document.body.appendChild(this.plot.element());
     }
 
     urlEncodeLocation(): string {
