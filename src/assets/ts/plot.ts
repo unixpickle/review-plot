@@ -78,3 +78,48 @@ class ReviewPlot {
 function marginPercent(frac: number): string {
     return `${(frac * 90 + 5).toFixed(3)}%`;
 }
+
+class ReviewQuery {
+    public onResults: (_: ReviewItem[]) => void = null;
+    public onError: (_: string) => void = null;
+    public onDone: () => void = null;
+
+    private abort: AbortController = new AbortController();
+
+    constructor(private url: string) {
+    }
+
+    async run() {
+        const place = window.app.urlEncodeLocation();
+        const url = `/api/reviews?url=${encodeURIComponent(this.url)}&${place}`;
+        try {
+            const results = await fetch(url);
+            const reader = results.body.getReader();
+            let buf = '';
+            while (true) {
+                let result = await reader.read();
+                if (result.done) {
+                    this.onDone();
+                    return;
+                }
+                buf += new TextDecoder().decode(result.value);
+                while (buf.includes('\n')) {
+                    const lineIndex = buf.indexOf('\n');
+                    const line = buf.substring(0, lineIndex);
+                    buf = buf.substring(lineIndex + 1);
+                    const parsed: ReviewItem[] = JSON.parse(line);
+                    this.onResults(parsed);
+                }
+            }
+        } catch (e) {
+            this.onError(e.toString());
+        }
+    }
+
+    cancel() {
+        this.onResults = (_) => null;
+        this.onError = (_) => null;
+        this.onDone = () => null;
+        this.abort.abort();
+    }
+}

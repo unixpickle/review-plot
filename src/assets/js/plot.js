@@ -1,3 +1,12 @@
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
 class ReviewPlot {
     constructor() {
         this.items = [];
@@ -51,5 +60,49 @@ class ReviewPlot {
 }
 function marginPercent(frac) {
     return `${(frac * 90 + 5).toFixed(3)}%`;
+}
+class ReviewQuery {
+    constructor(url) {
+        this.url = url;
+        this.onResults = null;
+        this.onError = null;
+        this.onDone = null;
+        this.abort = new AbortController();
+    }
+    run() {
+        return __awaiter(this, void 0, void 0, function* () {
+            const place = window.app.urlEncodeLocation();
+            const url = `/api/reviews?url=${encodeURIComponent(this.url)}&${place}`;
+            try {
+                const results = yield fetch(url);
+                const reader = results.body.getReader();
+                let buf = '';
+                while (true) {
+                    let result = yield reader.read();
+                    if (result.done) {
+                        this.onDone();
+                        return;
+                    }
+                    buf += new TextDecoder().decode(result.value);
+                    while (buf.includes('\n')) {
+                        const lineIndex = buf.indexOf('\n');
+                        const line = buf.substring(0, lineIndex);
+                        buf = buf.substring(lineIndex + 1);
+                        const parsed = JSON.parse(line);
+                        this.onResults(parsed);
+                    }
+                }
+            }
+            catch (e) {
+                this.onError(e.toString());
+            }
+        });
+    }
+    cancel() {
+        this.onResults = (_) => null;
+        this.onError = (_) => null;
+        this.onDone = () => null;
+        this.abort.abort();
+    }
 }
 //# sourceMappingURL=plot.js.map
