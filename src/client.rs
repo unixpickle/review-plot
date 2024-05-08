@@ -16,7 +16,7 @@ pub struct GeoLocation {
     pub accuracy: f64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct LocationInfo {
     pub name: String,
     pub url: String,
@@ -289,33 +289,57 @@ async fn decode_search_result(driver: &WebDriver) -> Result<SearchResult, Scrape
         return Err(ScrapeError::parse_error("no main content was found"));
     }
 
-    // Look for the string indicating no results are found.
-    for x in driver.find_all(By::Tag("div")).await? {
-        if x.text().await?.starts_with("Google Maps can't find") {
-            return Ok(SearchResult::NotFound);
-        }
+    let no_results: bool = driver
+        .execute(
+            "
+            const divs = document.getElementsByTagName('div');
+            for (let i = 0; i < divs.length; i++) {
+                if (divs[i].textContent.startsWith('Google Maps can\\'t find')) {
+                    return true;
+                }
+            }
+            return false;
+            ",
+            vec![],
+        )
+        .await?
+        .convert()?;
+    if no_results {
+        return Ok(SearchResult::NotFound);
     }
 
     // Look for an indication that multiple results were found.
-    for x in driver
-        .find_all(By::XPath("//*[starts-with(@aria-label, 'Results for')]"))
-        .await?
-    {
-        let mut destinations: Vec<LocationInfo> = Vec::new();
-        for link in x.find_all(By::Tag("a")).await? {
-            if let Some(href) = link.attr("href").await? {
-                if let Some(name) = link.attr("aria-label").await? {
-                    destinations.push(LocationInfo {
-                        name: name,
-                        url: href,
-                    });
+    let destinations: Vec<LocationInfo> = driver
+        .execute(
+            "
+            const divs = document.getElementsByTagName('div');
+            const results = [];
+            for (let i = 0; i < divs.length; i++) {
+                const div = divs[i];
+                if ((div.getAttribute('aria-label') || '').startsWith('Results for')) {
+                    const links = div.getElementsByTagName('a');
+                    for (let j = 0; j < links.length; j++) {
+                        const link = links[j];
+                        const href = link.href;
+                        const name = link.getAttribute('aria-label');
+                        if (href && name) {
+                            results.push({name: name, url: href});
+                        }
+                    }
                 }
             }
-        }
-        return Ok(SearchResult::Multiple(destinations));
-    }
+            return results;
+            ",
+            vec![],
+        )
+        .await?
+        .convert()?;
 
-    Err(ScrapeError::parse_error("unable to parse search results"))
+    if destinations.len() > 0 {
+        Ok(SearchResult::Multiple(destinations))
+    } else {
+        Err(ScrapeError::parse_error("unable to parse search results"))
+    }
 }
 
 async fn click_more_reviews_button(driver: &WebDriver) -> Result<(), ScrapeError> {
