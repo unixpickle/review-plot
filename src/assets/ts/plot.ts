@@ -12,19 +12,39 @@ class ReviewPlot {
     private startDate: HTMLLabelElement;
     private endDate: HTMLLabelElement;
     private dots: HTMLDivElement;
+    private statusName: HTMLLabelElement;
+    private statusCount: HTMLLabelElement;
+    private statusError: HTMLLabelElement;
+
+    private query: ReviewQuery;
 
     constructor() {
         this._element = document.createElement('div');
-        this._element.className = 'plot';
+        this._element.className = 'plot plot-empty';
         this.startDate = document.createElement('label');
         this.startDate.className = 'plot-start-date';
         this.endDate = document.createElement('label');
         this.endDate.className = 'plot-end-date';
         this.dots = document.createElement('div');
         this.dots.className = 'plot-dots';
+
+        const status = document.createElement('div');
+        status.className = 'plot-status';
+        this.statusName = document.createElement('label');
+        this.statusName.textContent = 'No location selected';
+        this.statusName.className = 'plot-status-name';
+        this.statusCount = document.createElement('label');
+        this.statusCount.className = 'plot-status-count';
+        this.statusError = document.createElement('label');
+        this.statusError.className = 'plot-status-error';
+        status.appendChild(this.statusName);
+        status.appendChild(this.statusCount);
+        status.appendChild(this.statusError);
+
         this._element.appendChild(this.startDate);
         this._element.appendChild(this.endDate);
         this._element.appendChild(this.dots);
+        this._element.appendChild(status);
 
         this.updateUI();
     }
@@ -33,12 +53,52 @@ class ReviewPlot {
         return this._element;
     }
 
-    clearItems() {
+    startQuery(name: string, url: string) {
+        if (this.query) {
+            this.query.cancel();
+            this.query = null;
+        }
+        this.setStatus('loading');
+        this.clearItems();
+        this.statusName.textContent = name;
+        this.statusCount.textContent = '0 results';
+        this.query = new ReviewQuery(url);
+        this.query.onDone = () => {
+            this.setStatus('loaded');
+            this.query = null;
+        };
+        this.query.onError = (e) => {
+            this.statusError.textContent = e.toString();
+            this.setStatus('error');
+            this.query = null;
+        };
+        let count = 0;
+        this.query.onResults = (results) => {
+            count += results.length;
+            this.addItems(results);
+            this.statusCount.textContent = `${count} results`;
+            this.query = null;
+        };
+        this.query.run();
+    }
+
+    private setStatus(status: string) {
+        for (let i = 0; i < this._element.classList.length; i++) {
+            const cls = this._element.classList[i];
+            if (cls.startsWith('plot-')) {
+                this._element.classList.remove(cls);
+                break;
+            }
+        }
+        this._element.classList.add(`plot-${status}`);
+    }
+
+    private clearItems() {
         this.items = [];
         this.updateUI();
     }
 
-    addItems(items: ReviewItem[]) {
+    private addItems(items: ReviewItem[]) {
         this.items = this.items.concat(items);
         this.items.sort((x, y) => x.timestamp - y.timestamp);
         this.updateUI();

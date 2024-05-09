@@ -2,7 +2,6 @@
     position: relative;
     display: block;
     width: 500px;
-    height: 300px;
     margin: 10px auto;
 }
 
@@ -11,7 +10,7 @@
     top: 0;
     left: 30px;
     width: calc(100% - 60px);
-    height: 100%;
+    height: 300px;
     background-color: #f0f0f0;
 }
 
@@ -45,4 +44,39 @@
     margin-bottom: -10px;
     border-radius: 10px;
     background-color: #65dcd4;
+}
+
+.plot-status {
+    display: block;
+    padding: 300px 10px 10px 10px;
+    box-sizing: border-box;
+}
+
+.plot-status>label {
+    text-align: center;
+    padding-top: 5px;
+}
+
+.plot-status-name {
+    display: block;
+}
+
+.plot-empty .plot-status-count {
+    display: none;
+}
+
+.plot-loading .plot-status-count,
+.plot-loaded .plot-status-count,
+.plot-error .plot-status-count {
+    display: block;
+}
+
+.plot-loading .plot-status-count::before {
+    display: inline;
+    content: '⌛';
+}
+
+.plot-error .plot-status-error {
+    display: block;
+    color: #ff0000;
 }
