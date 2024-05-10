@@ -95,8 +95,8 @@ class ReviewPlot {
         }
         const start = new Date(this.items[0].timestamp * 1000);
         const end = new Date(this.items[this.items.length - 1].timestamp * 1000);
-        this.startDate.textContent = `${start}`;
-        this.endDate.textContent = `${end}`;
+        this.startDate.textContent = formatDate(start);
+        this.endDate.textContent = formatDate(end);
         const span = Math.max(1, this.items[this.items.length - 1].timestamp - this.items[0].timestamp);
         this.items.forEach((x) => {
             const timestamp = x.timestamp;
@@ -108,6 +108,14 @@ class ReviewPlot {
             this.dots.appendChild(dot);
         });
     }
+}
+function formatDate(date) {
+    let month = (date.getMonth() + 1).toString();
+    let day = date.getDate().toString();
+    var year = date.getFullYear().toString();
+    month = (month.length == 1) ? '0' + month : month;
+    day = (day.length == 1) ? '0' + day : day;
+    return `${month}/${day}/${year}`;
 }
 function marginPercent(frac) {
     return `${(frac * 90 + 5).toFixed(3)}%`;
@@ -140,7 +148,13 @@ class ReviewQuery {
                         const line = buf.substring(0, lineIndex);
                         buf = buf.substring(lineIndex + 1);
                         const parsed = JSON.parse(line);
-                        this.onResults(parsed);
+                        if (parsed.hasOwnProperty('error')) {
+                            this.onError(parsed.error);
+                            return;
+                        }
+                        else {
+                            this.onResults(parsed);
+                        }
                     }
                 }
             }
