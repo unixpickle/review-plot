@@ -5,7 +5,7 @@
     margin: 10px auto;
 }
 
-.plot-dots {
+.plot-graph {
     position: absolute;
     top: 0;
     left: 30px;
@@ -34,16 +34,6 @@
     left: calc(100% - 30px);
     transform: rotate(90deg);
     transform-origin: left bottom 0;
-}
-
-.plot-dots-dot {
-    position: absolute;
-    width: 20px;
-    height: 20px;
-    margin-left: -10px;
-    margin-bottom: -10px;
-    border-radius: 10px;
-    background-color: #65bcd4;
 }
 
 .plot-status {
@@ -83,4 +73,16 @@
 .plot-error .plot-status-error {
     display: block;
     color: #ff0000;
+}
+
+.plot-controls {
+    padding: 10px 0;
+}
+
+.plot-controls-input-field {
+    text-align: center;
+}
+
+.plot-controls-input-field>label {
+    display: block;
 }

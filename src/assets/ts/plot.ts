@@ -5,16 +5,24 @@ interface ReviewItem {
     rating: number;
 }
 
+interface ReviewAverage {
+    timestamp: number;
+    rating: number;
+}
+
 class ReviewPlot {
     private items: ReviewItem[] = [];
 
     private _element: HTMLElement;
     private startDate: HTMLLabelElement;
     private endDate: HTMLLabelElement;
-    private dots: HTMLDivElement;
+    private graph: SVGSVGElement;
+
     private statusName: HTMLLabelElement;
     private statusCount: HTMLLabelElement;
     private statusError: HTMLLabelElement;
+
+    private granularity: HTMLInputElement;
 
     private query: ReviewQuery;
 
@@ -25,8 +33,9 @@ class ReviewPlot {
         this.startDate.className = 'plot-start-date';
         this.endDate = document.createElement('label');
         this.endDate.className = 'plot-end-date';
-        this.dots = document.createElement('div');
-        this.dots.className = 'plot-dots';
+        this.graph = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        this.graph.setAttribute('class', 'plot-graph');
+        this.graph.setAttribute('viewBox', '0 0 440 300');
 
         const status = document.createElement('div');
         status.className = 'plot-status';
@@ -41,10 +50,20 @@ class ReviewPlot {
         status.appendChild(this.statusCount);
         status.appendChild(this.statusError);
 
+        const controls = document.createElement('div');
+        controls.className = 'plot-controls';
+        this.granularity = createControlsInput(controls, 'Granularity');
+        this.granularity.type = 'range';
+        this.granularity.min = '5';
+        this.granularity.max = '100';
+        this.granularity.value = '20';
+        this.granularity.addEventListener('input', () => this.updateUI());
+
         this._element.appendChild(this.startDate);
         this._element.appendChild(this.endDate);
-        this._element.appendChild(this.dots);
+        this._element.appendChild(this.graph);
         this._element.appendChild(status);
+        this._element.appendChild(controls);
 
         this.updateUI();
     }
@@ -105,7 +124,7 @@ class ReviewPlot {
     }
 
     private updateUI() {
-        this.dots.textContent = '';
+        this.graph.textContent = '';
 
         if (this.items.length == 0) {
             this.startDate.textContent = 'No data';
@@ -123,16 +142,72 @@ class ReviewPlot {
             this.items[this.items.length - 1].timestamp - this.items[0].timestamp,
         );
 
-        this.items.forEach((x) => {
+        const avgItems = this.averagedItems();
+
+        avgItems.forEach((x) => {
             const timestamp = x.timestamp;
             const frac = this.items.length > 1 ? (timestamp - this.items[0].timestamp) / span : 0.5;
-            const dot = document.createElement('div');
-            dot.className = 'plot-dots-dot';
-            dot.style.left = marginPercent(frac);
-            dot.style.bottom = marginPercent((x.rating - 1) / 4);
-            this.dots.appendChild(dot);
+            const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            dot.setAttribute('class', 'plot-graph-dot');
+            dot.setAttribute('r', '10');
+            dot.setAttribute('fill', '#65bcd4');
+            dot.setAttribute('cx', marginPercent(frac));
+            dot.setAttribute('cy', marginPercent(1 - (x.rating - 1) / 4));
+            this.graph.appendChild(dot);
         });
     }
+
+    private averagedItems(): ReviewAverage[] {
+        if (this.items.length < 3) {
+            return this.items;
+        }
+        const start = this.items[0].timestamp
+        const end = this.items[this.items.length - 1].timestamp;
+        const span = end - start;
+        if (span == 0) {
+            return this.items;
+        }
+        const numWindows = parseInt(this.granularity.value);
+        const windowSize = span / numWindows;
+        const windowItems: ReviewItem[][] = [];
+        for (let i = 0; i < numWindows; i++) {
+            windowItems.push([]);
+        }
+        this.items.forEach((item) => {
+            const window = Math.min(
+                numWindows - 1,
+                Math.floor((item.timestamp - start) / windowSize),
+            );
+            windowItems[window].push(item);
+        });
+
+        const result: ReviewAverage[] = [];
+        windowItems.forEach((items) => {
+            let ratingSum = 0.0;
+            let timestampSum = 0.0;
+            items.forEach((x) => {
+                ratingSum += x.rating;
+                timestampSum += x.timestamp;
+            });
+            result.push({
+                timestamp: timestampSum / items.length,
+                rating: ratingSum / items.length,
+            });
+        });
+        return result;
+    }
+}
+
+function createControlsInput(container: HTMLElement, name: string): HTMLInputElement {
+    const field = document.createElement('div');
+    field.className = 'plot-controls-input-field';
+    const label = document.createElement('label');
+    label.textContent = name;
+    const input = document.createElement('input');
+    field.appendChild(label);
+    field.appendChild(input);
+    container.appendChild(field);
+    return input;
 }
 
 function formatDate(date: Date): string {
