@@ -76,6 +76,10 @@
     content: '⌛';
 }
 
+.plot-status-error {
+    display: none;
+}
+
 .plot-error .plot-status-error {
     display: block;
     color: #ff0000;

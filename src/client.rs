@@ -446,10 +446,30 @@ fn parse_logged_reviews(response: &str) -> Result<ReviewResult, ScrapeError> {
             let review_stars = if get_array_index(&star_err, review_content, 0)?.is_null() {
                 // This is for reviews from other sites, where we have an object at index
                 // 8 that looks like [null,4,"4/5","0"].
-                as_number(
+                //
+                // Alternatively looks like [BUNCH_OF_DATA,8,"8/10","0"].
+                // We want to support reviews that are out of any scale, so we parse the
+                // divisor in the third entry.
+                let divisor: f64 = as_string(
                     &star_err,
-                    get_array_index(&star_err, get_array_index(&star_err, review_content, 8)?, 1)?,
+                    get_array_index(&star_err, get_array_index(&star_err, review_content, 8)?, 2)?,
                 )?
+                .split("/")
+                .last()
+                .ok_or_else(|| ScrapeError::parse_error("failed to identify review scale"))?
+                .parse()
+                .map_err(|e| ScrapeError::parse_error(format!("invalid review scale: {}", e)))?;
+
+                ((5.0 / divisor)
+                    * as_number(
+                        &star_err,
+                        get_array_index(
+                            &star_err,
+                            get_array_index(&star_err, review_content, 8)?,
+                            1,
+                        )?,
+                    )?)
+                .clamp(1.0, 5.0)
             } else {
                 as_number(
                     &star_err,
