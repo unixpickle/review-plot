@@ -4,6 +4,42 @@
     margin: 10px auto;
 }
 
+.location-picker-header {
+    text-align: center;
+    margin-bottom: 5px;
+}
+
+.location-picker-header>button {
+    border: none;
+    padding: 0;
+    margin: 0;
+    color: #999;
+    background-color: transparent;
+}
+
+.location-picker-header>button:focus {
+    outline: 0;
+}
+
+.location-picker-header>button::after {
+    font-size: 18px;
+    display: inline-block;
+    content: '▾';
+    margin-right: 5px;
+}
+
+.location-picker-closed .location-picker-header>button::after {
+    content: '▸';
+}
+
+.location-picker-header>label {
+    vertical-align: middle;
+}
+
+.location-picker-closed .location-picker-field {
+    display: none;
+}
+
 .location-picker-field {
     text-align: center;
     margin: 2px 0;
