@@ -23,6 +23,7 @@ class ReviewPlot {
     private statusError: HTMLLabelElement;
 
     private granularity: HTMLInputElement;
+    private dateRange: HTMLSelectElement;
 
     private query: ReviewQuery;
 
@@ -58,6 +59,13 @@ class ReviewPlot {
         this.granularity.max = '100';
         this.granularity.value = '20';
         this.granularity.addEventListener('input', () => this.updateUI());
+        this.dateRange = createControlsSelect(controls, 'Date range', [
+            ['All time', 'all'],
+            ['5 years', '5 years'],
+            ['1 year', '1 year'],
+            ['6 months', '6 months'],
+        ]);
+        this.dateRange.addEventListener('change', () => this.updateUI());
 
         this._element.appendChild(this.startDate);
         this._element.appendChild(this.endDate);
@@ -126,27 +134,24 @@ class ReviewPlot {
     private updateUI() {
         this.graph.textContent = '';
 
-        if (this.items.length == 0) {
+        const items = this.averagedAndFilteredItems();
+
+        if (items.length == 0) {
             this.startDate.textContent = 'No data';
             this.endDate.textContent = 'No data';
             return;
         }
 
-        const start = new Date(this.items[0].timestamp * 1000);
-        const end = new Date(this.items[this.items.length - 1].timestamp * 1000);
+        const start = new Date(items[0].timestamp * 1000);
+        const end = new Date(items[items.length - 1].timestamp * 1000);
         this.startDate.textContent = formatDate(start);
         this.endDate.textContent = formatDate(end);
 
-        const span = Math.max(
-            1,
-            this.items[this.items.length - 1].timestamp - this.items[0].timestamp,
-        );
+        const span = Math.max(1, items[items.length - 1].timestamp - items[0].timestamp);
 
-        const avgItems = this.averagedItems();
-
-        avgItems.forEach((x) => {
+        items.forEach((x) => {
             const timestamp = x.timestamp;
-            const frac = this.items.length > 1 ? (timestamp - this.items[0].timestamp) / span : 0.5;
+            const frac = items.length > 1 ? (timestamp - items[0].timestamp) / span : 0.5;
             const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
             dot.setAttribute('class', 'plot-graph-dot');
             dot.setAttribute('r', '10');
@@ -157,15 +162,35 @@ class ReviewPlot {
         });
     }
 
-    private averagedItems(): ReviewAverage[] {
-        if (this.items.length < 3) {
-            return this.items;
+    private firstAllowedTimestamp(): number {
+        const val = this.dateRange.value;
+        if (val == 'all') {
+            return 0;
         }
-        const start = this.items[0].timestamp
-        const end = this.items[this.items.length - 1].timestamp;
+        if (val.endsWith('years') || val.endsWith('year')) {
+            const now = new Date();
+            now.setFullYear(now.getFullYear() - parseFloat(val.split(' ')[0]));
+            return now.getTime() / 1000;
+        }
+        if (val.endsWith('months') || val.endsWith('month')) {
+            const now = new Date();
+            now.setMonth(now.getMonth() - parseFloat(val.split(' ')[0]));
+            return now.getTime() / 1000;
+        }
+        throw new Error(`unexpected date range: ${val}`);
+    }
+
+    private averagedAndFilteredItems(): ReviewAverage[] {
+        const minTime = this.firstAllowedTimestamp();
+        const items = this.items.filter((x) => x.timestamp >= minTime);
+        if (items.length < 3) {
+            return items;
+        }
+        const start = items[0].timestamp
+        const end = items[items.length - 1].timestamp;
         const span = end - start;
         if (span == 0) {
-            return this.items;
+            return items;
         }
         const numWindows = parseInt(this.granularity.value);
         const windowSize = span / numWindows;
@@ -173,7 +198,7 @@ class ReviewPlot {
         for (let i = 0; i < numWindows; i++) {
             windowItems.push([]);
         }
-        this.items.forEach((item) => {
+        items.forEach((item) => {
             const window = Math.min(
                 numWindows - 1,
                 Math.floor((item.timestamp - start) / windowSize),
@@ -183,6 +208,10 @@ class ReviewPlot {
 
         const result: ReviewAverage[] = [];
         windowItems.forEach((items) => {
+            if (items.length == 0) {
+                // No reviews in this bucket.
+                return;
+            }
             let ratingSum = 0.0;
             let timestampSum = 0.0;
             items.forEach((x) => {
@@ -200,7 +229,7 @@ class ReviewPlot {
 
 function createControlsInput(container: HTMLElement, name: string): HTMLInputElement {
     const field = document.createElement('div');
-    field.className = 'plot-controls-input-field';
+    field.className = 'plot-controls-field plot-controls-input-field';
     const label = document.createElement('label');
     label.textContent = name;
     const input = document.createElement('input');
@@ -208,6 +237,29 @@ function createControlsInput(container: HTMLElement, name: string): HTMLInputEle
     field.appendChild(input);
     container.appendChild(field);
     return input;
+}
+
+function createControlsSelect(
+    container: HTMLElement,
+    name: string,
+    namesAndValues: [string, string][],
+): HTMLSelectElement {
+    const field = document.createElement('div');
+    field.className = 'plot-controls-field plot-controls-select-field';
+    const label = document.createElement('label');
+    label.textContent = name;
+    const select = document.createElement('select');
+    namesAndValues.forEach((nameAndValue) => {
+        const option = document.createElement('option');
+        option.value = nameAndValue[1];
+        option.textContent = nameAndValue[0];
+        select.appendChild(option);
+    });
+    select.value = namesAndValues[0][1];
+    field.appendChild(label);
+    field.appendChild(select);
+    container.appendChild(field);
+    return select;
 }
 
 function formatDate(date: Date): string {
@@ -268,6 +320,10 @@ class ReviewQuery {
             }
         } catch (e) {
             this.onError(e.toString());
+        } finally {
+            if (this.abort !== null) {
+                this.abort.abort();
+            }
         }
     }
 
@@ -276,5 +332,6 @@ class ReviewQuery {
         this.onError = (_) => null;
         this.onDone = () => null;
         this.abort.abort();
+        this.abort = null;
     }
 }

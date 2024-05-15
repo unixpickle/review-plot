@@ -79,10 +79,10 @@
     padding: 10px 0;
 }
 
-.plot-controls-input-field {
+.plot-controls-field {
     text-align: center;
 }
 
-.plot-controls-input-field>label {
+.plot-controls-field>label {
     display: block;
 }
