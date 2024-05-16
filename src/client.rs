@@ -20,6 +20,7 @@ pub struct GeoLocation {
 pub struct LocationInfo {
     pub name: String,
     pub url: String,
+    pub extra: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -152,7 +153,13 @@ impl Client {
         location: &GeoLocation,
     ) -> Result<SearchResult, ScrapeError> {
         set_location(&self.dev_tools, location).await?;
-        self.driver.goto("https://www.google.com/maps").await?;
+        self.driver.delete_all_cookies().await?;
+        self.driver
+            .goto(format!(
+                "https://www.google.com/maps/@{},{},{}z?entry=ttu",
+                location.latitude, location.longitude, location.accuracy
+            ))
+            .await?;
         let query = self.driver.find(By::Name("q")).await?;
         query.focus().await?;
         query.send_keys(search).await?;
@@ -279,6 +286,7 @@ async fn decode_search_result(driver: &WebDriver) -> Result<SearchResult, Scrape
                 return Ok(SearchResult::Singular(LocationInfo {
                     name: name,
                     url: current_url,
+                    extra: vec![],
                 }));
             } else {
                 return Err(ScrapeError::parse_error(
@@ -322,8 +330,31 @@ async fn decode_search_result(driver: &WebDriver) -> Result<SearchResult, Scrape
                         const link = links[j];
                         const href = link.href;
                         const name = link.getAttribute('aria-label');
-                        if (href && name) {
-                            results.push({name: name, url: href});
+                        if (href && name && href.startsWith('https://www.google.com/maps/place')) {
+                            const lines = [];
+                            const parent = link.parentElement;
+                            const extension = parent.getElementsByClassName('section-subtitle-extension');
+                            for (let i = 0; i < extension.length; i++) {
+                                let sibling = extension[i].nextSibling;
+                                while (sibling) {
+                                    const spans = sibling.getElementsByTagName('span');
+                                    for (let j = 0; j < spans.length; j++) {
+                                        const span = spans[j];
+                                        if (span.getAttribute('aria-hidden')) {
+                                            continue;
+                                        }
+                                        if (span.getElementsByTagName('span').length) {
+                                            // We only want root pieces of text.
+                                            continue;
+                                        }
+                                        if (span.textContent.length > 1) {
+                                            lines.push(span.textContent);
+                                        }
+                                    }
+                                    sibling = sibling.nextSibling;
+                                }
+                            }
+                            results.push({name: name, url: href, extra: lines});
                         }
                     }
                 }

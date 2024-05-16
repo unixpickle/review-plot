@@ -107,3 +107,9 @@
 .search-result>* {
     pointer-events: none;
 }
+
+.search-result-extra {
+    font-size: 0.8em;
+    color: #999;
+    display: block;
+}

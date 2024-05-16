@@ -101,6 +101,12 @@ class PlaceSearch {
             const name = document.createElement('label');
             name.textContent = x.name;
             result.appendChild(name);
+            x.extra.forEach((content) => {
+                const line = document.createElement('span');
+                line.className = 'search-result-extra';
+                line.textContent = content;
+                result.appendChild(line);
+            });
             result.addEventListener('click', () => this.onResult(x));
             this.resultItems.appendChild(result);
         });
