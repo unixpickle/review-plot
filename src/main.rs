@@ -1,4 +1,4 @@
-use std::{convert::Infallible, error::Error};
+use std::{convert::Infallible, error::Error, sync::Arc};
 
 use bytes::Bytes;
 use clap::Parser;
@@ -9,12 +9,15 @@ use hyper::{body, server::conn::http1, service::service_fn, Request, Response};
 
 mod client;
 mod client_pool;
+mod geolocate;
 mod handlers;
 use client::Client;
 use client_pool::{new_client_pool, ObjectPool};
 use handlers::{api_result_to_response, handle_reviews, handle_search};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::{net::TcpListener, signal};
+
+use crate::geolocate::IpLocator;
 
 const PAGE_MAPPING: [(&'static str, &'static str); 21] = [
     ("", include_str!("assets/index.html")),
@@ -51,6 +54,9 @@ struct Args {
 
     #[clap(long, value_parser, default_value = "0.0.0.0:8080")]
     host: String,
+
+    #[clap(long, value_parser, default_value_t = 0)]
+    num_proxies: usize,
 }
 
 #[tokio::main]
@@ -68,6 +74,7 @@ async fn entrypoint(
     args: Args,
     pool: &ObjectPool<Client>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let locator = Arc::new(IpLocator::new(args.num_proxies));
     let listener = TcpListener::bind(&args.host).await?;
     let exit_signal = signal::ctrl_c().fuse();
     pin_mut!(exit_signal);
@@ -82,12 +89,16 @@ async fn entrypoint(
                 return Ok(());
             }
         }
+        let client_ip = format!("{}", tcp.peer_addr().expect("get peer address").ip());
         let io = TokioIo::new(tcp);
 
         let local_pool = pool.clone();
+        let local_locator = locator.clone();
 
         let make_service = service_fn(move |req: Request<body::Incoming>| {
             let pool = local_pool.clone();
+            let local_locator = local_locator.clone();
+            let local_client_ip = client_ip.clone();
             async move {
                 if req.uri().path() == "/api/search" {
                     let result = handle_search(pool, req).await;
@@ -99,6 +110,12 @@ async fn entrypoint(
                         }
                         Ok(x) => Ok(x),
                     }
+                } else if req.uri().path() == "/api/location" {
+                    let location = local_locator.lookup_for_request(&req, &local_client_ip);
+                    api_result_to_response(
+                        Response::builder(),
+                        Result::<Option<(f64, f64)>, Infallible>::Ok(location),
+                    )
                 } else {
                     for (page, content) in PAGE_MAPPING {
                         if req.uri().path() == page {
