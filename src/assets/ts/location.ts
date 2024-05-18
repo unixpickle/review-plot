@@ -5,6 +5,9 @@ class LocationPicker {
     private longitude: HTMLInputElement;
     private accuracy: HTMLInputElement;
 
+    private gotBrowserLocation: boolean;
+    private changedLocation: boolean;
+
     constructor() {
         this._element = document.createElement('div');
         this._element.className = 'location-picker location-picker-closed';
@@ -27,6 +30,13 @@ class LocationPicker {
         this.latitude = createLabeledInput(this._element, 'Lat', '37.63');
         this.longitude = createLabeledInput(this._element, 'Lon', '-122.44');
         this.accuracy = createLabeledInput(this._element, 'Acc', '10.0');
+
+        [this.latitude, this.longitude, this.accuracy].forEach((el) => {
+            el.addEventListener('input', () => this.changedLocation = true);
+        });
+
+        this.fetchIPLocation();
+        this.fetchBrowserLocation();
     }
 
     element(): HTMLElement {
@@ -37,6 +47,35 @@ class LocationPicker {
         return (`latitude=${encodeURIComponent(this.latitude.value)}&` +
             `longitude=${encodeURIComponent(this.longitude.value)}&` +
             `accuracy=${encodeURIComponent(this.accuracy.value)}`);
+    }
+
+    private async fetchIPLocation() {
+        try {
+            const result = await (await fetch('/api/location')).json();
+            if (result == null) {
+                throw new Error('unknown location by IP');
+            }
+            console.log('location by IP:', result);
+            if (this.changedLocation || this.gotBrowserLocation) {
+                return;
+            }
+            this.latitude.value = result[0].toString();
+            this.longitude.value = result[1].toString();
+        } catch (e) {
+            console.log('failed to geolocate by IP: ' + e);
+        }
+    }
+
+    private fetchBrowserLocation() {
+        navigator.geolocation.getCurrentPosition((position) => {
+            if (this.changedLocation) {
+                return;
+            }
+            this.gotBrowserLocation = true;
+            this.latitude.value = position.coords.latitude.toString();
+            this.longitude.value = position.coords.longitude.toString();
+            this.accuracy.value = position.coords.accuracy.toString();
+        });
     }
 }
 

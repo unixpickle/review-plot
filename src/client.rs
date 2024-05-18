@@ -143,7 +143,6 @@ impl Client {
         if headless {
             caps.add_arg("--headless=new")?;
         }
-        caps.add_arg("--headless=new")?;
         caps.add_arg("--window-size=1920,1080")?;
         let driver = WebDriver::new(driver, caps).await?;
         let tools = ChromeDevTools::new(driver.handle.clone());
@@ -162,8 +161,8 @@ impl Client {
         self.driver.delete_all_cookies().await?;
         self.driver
             .goto(format!(
-                "https://www.google.com/maps/@{},{},{}z?entry=ttu",
-                location.latitude, location.longitude, location.accuracy
+                "https://www.google.com/maps/@{},{},15z?entry=ttu",
+                location.latitude, location.longitude,
             ))
             .await?;
         let query = self.driver.find(By::Name("q")).await?;

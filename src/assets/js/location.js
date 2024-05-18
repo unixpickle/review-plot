@@ -1,3 +1,12 @@
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
 class LocationPicker {
     constructor() {
         this._element = document.createElement('div');
@@ -19,6 +28,11 @@ class LocationPicker {
         this.latitude = createLabeledInput(this._element, 'Lat', '37.63');
         this.longitude = createLabeledInput(this._element, 'Lon', '-122.44');
         this.accuracy = createLabeledInput(this._element, 'Acc', '10.0');
+        [this.latitude, this.longitude, this.accuracy].forEach((el) => {
+            el.addEventListener('input', () => this.changedLocation = true);
+        });
+        this.fetchIPLocation();
+        this.fetchBrowserLocation();
     }
     element() {
         return this._element;
@@ -27,6 +41,36 @@ class LocationPicker {
         return (`latitude=${encodeURIComponent(this.latitude.value)}&` +
             `longitude=${encodeURIComponent(this.longitude.value)}&` +
             `accuracy=${encodeURIComponent(this.accuracy.value)}`);
+    }
+    fetchIPLocation() {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const result = yield (yield fetch('/api/location')).json();
+                if (result == null) {
+                    throw new Error('unknown location by IP');
+                }
+                console.log('location by IP:', result);
+                if (this.changedLocation || this.gotBrowserLocation) {
+                    return;
+                }
+                this.latitude.value = result[0].toString();
+                this.longitude.value = result[1].toString();
+            }
+            catch (e) {
+                console.log('failed to geolocate by IP: ' + e);
+            }
+        });
+    }
+    fetchBrowserLocation() {
+        navigator.geolocation.getCurrentPosition((position) => {
+            if (this.changedLocation) {
+                return;
+            }
+            this.gotBrowserLocation = true;
+            this.latitude.value = position.coords.latitude.toString();
+            this.longitude.value = position.coords.longitude.toString();
+            this.accuracy.value = position.coords.accuracy.toString();
+        });
     }
 }
 function createLabeledInput(parent, name, defaultVal) {
