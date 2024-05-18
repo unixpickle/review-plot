@@ -27,10 +27,14 @@ impl Display for PoolError {
 
 impl Error for PoolError {}
 
-pub async fn new_client_pool(capacity: usize, driver: &str) -> WebDriverResult<ObjectPool<Client>> {
+pub async fn new_client_pool(
+    capacity: usize,
+    driver: &str,
+    headless: bool,
+) -> WebDriverResult<ObjectPool<Client>> {
     let mut objs = Vec::new();
     for _ in 0..capacity {
-        let obj = Client::new(driver).await?;
+        let obj = Client::new(driver, headless).await?;
         objs.push(obj);
     }
     Ok(ObjectPool {

@@ -7,6 +7,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use thirtyfour::extensions::cdp::ChromeDevTools;
 use thirtyfour::prelude::{By, DesiredCapabilities, WebDriver, WebDriverError, WebDriverResult};
+use thirtyfour::ChromiumLikeCapabilities;
 use tokio::time::sleep;
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -137,8 +138,13 @@ pub struct Client {
 }
 
 impl Client {
-    pub async fn new(driver: &str) -> WebDriverResult<Client> {
-        let caps = DesiredCapabilities::chrome();
+    pub async fn new(driver: &str, headless: bool) -> WebDriverResult<Client> {
+        let mut caps = DesiredCapabilities::chrome();
+        if headless {
+            caps.add_arg("--headless=new")?;
+        }
+        caps.add_arg("--headless=new")?;
+        caps.add_arg("--window-size=1920,1080")?;
         let driver = WebDriver::new(driver, caps).await?;
         let tools = ChromeDevTools::new(driver.handle.clone());
         Ok(Client {

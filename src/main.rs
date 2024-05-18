@@ -57,12 +57,15 @@ struct Args {
 
     #[clap(long, value_parser, default_value_t = 0)]
     num_proxies: usize,
+
+    #[clap(long, short, action)]
+    headless: bool,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let args = Args::parse();
-    let pool = new_client_pool(1, &args.driver).await?;
+    let pool = new_client_pool(1, &args.driver, args.headless).await?;
     let result = entrypoint(args, &pool).await;
 
     pool.close(|client| client.close()).await?;
@@ -119,7 +122,16 @@ async fn entrypoint(
                 } else {
                     for (page, content) in PAGE_MAPPING {
                         if req.uri().path() == page {
-                            return Ok(static_response(Response::builder(), content)?);
+                            let content_type = match page.split(".").last().unwrap() {
+                                "css" => "text/css",
+                                "/" | "html" => "text/html",
+                                "js" => "application/javascript",
+                                _ => "text/plain",
+                            };
+                            return Ok(static_response(
+                                Response::builder().header("content-type", content_type),
+                                content,
+                            )?);
                         }
                     }
                     Ok(static_response(
