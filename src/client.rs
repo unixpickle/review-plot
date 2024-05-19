@@ -170,7 +170,10 @@ impl Client {
         query.send_keys(search).await?;
         query.send_keys("\n").await?;
 
-        Ok(wait_for_scrape_result(&self.driver, decode_search_result).await?)
+        Ok(
+            wait_for_scrape_result(&self.driver, Duration::from_secs(1), decode_search_result)
+                .await?,
+        )
     }
 
     pub async fn list_reviews<'a>(
@@ -195,11 +198,30 @@ impl Client {
                     };
                     const origSend = XMLHttpRequest.prototype.send;
                     window.recordedReviewResponses = [];
+                    window.nextReviewURL = null;
+                    window.usingURL = false;
                     XMLHttpRequest.prototype.send = function() {
                         const oldCb = this.onreadystatechange;
                         this.onreadystatechange = function() {
                             if (this.readyState == 4 && this._url.includes('listugcposts')) {
                                 window.recordedReviewResponses.push(this.response);
+                                try {
+                                    // Attempt to parse results to find the next URL.
+                                    const lines = this.response.split('\n');
+                                    const parsed = JSON.parse(lines[lines.length - 1]);
+                                    const nextToken = parsed[1];
+                                    if (nextToken) {
+                                        const expr = /!2s[^!]*!/;
+                                        if (expr.test(this._url)) {
+                                            window.usingURL = true;
+                                            window.nextReviewURL = this._url.replace(
+                                                expr, "!2s" + encodeURIComponent(nextToken) + "!",
+                                            );
+                                        }
+                                    }
+                                } catch (e) {
+                                    // Fall back on scrolling to get results.
+                                }
                             }
                             if (oldCb) {
                                 return oldCb.apply(this, arguments);
@@ -211,9 +233,16 @@ impl Client {
                 vec![],
             )
             .await?;
-        wait_for_scrape_result(&self.driver, click_more_reviews_button).await?;
+        wait_for_scrape_result(
+            &self.driver,
+            Duration::from_secs(1),
+            click_more_reviews_button,
+        )
+        .await?;
 
-        let reviews = wait_for_scrape_result(&self.driver, get_logged_reviews).await?;
+        let reviews =
+            wait_for_scrape_result(&self.driver, Duration::from_secs(1), get_logged_reviews)
+                .await?;
         Ok(ReviewIter::new(self, reviews))
     }
 
@@ -222,20 +251,33 @@ impl Client {
             .execute("window.recordedReviewResponses = [];", vec![])
             .await?;
         let scroll_code = r#"
-            const allDivs = Array.from(document.getElementsByTagName('div'));
-            const reviewItems = allDivs.filter((x) => !!x.getAttribute('data-review-id'));
-            const reviewContainer = reviewItems[0].parentElement.parentElement;
-            reviewContainer.scrollTop = 10000000;
+            if (window.usingURL) {
+                if (window.nextReviewURL) {
+                    const xhr = new XMLHttpRequest();
+                    xhr.open("GET", window.nextReviewURL, true);
+                    xhr.send(null);
+                    window.nextReviewURL = null;
+                }
+            } else {
+                const allDivs = Array.from(document.getElementsByTagName('div'));
+                const reviewItems = allDivs.filter((x) => !!x.getAttribute('data-review-id'));
+                const reviewContainer = reviewItems[0].parentElement.parentElement;
+                reviewContainer.scrollTop = 10000000;
+            }
         "#;
         self.driver.execute(scroll_code, vec![]).await?;
-        if let Ok(next) = wait_for_scrape_result(&self.driver, get_logged_reviews).await {
+        if let Ok(next) =
+            wait_for_scrape_result(&self.driver, Duration::from_millis(500), get_logged_reviews)
+                .await
+        {
             Ok(next)
         } else {
             // Try to scroll one more time, since sometimes
             // images took a while to load and prevented the
             // scroll from triggering a reload.
             self.driver.execute(scroll_code, vec![]).await?;
-            wait_for_scrape_result(&self.driver, get_logged_reviews).await
+            wait_for_scrape_result(&self.driver, Duration::from_millis(500), get_logged_reviews)
+                .await
         }
     }
 
@@ -256,6 +298,7 @@ async fn set_location(dev_tools: &ChromeDevTools, location: &GeoLocation) -> Web
 
 async fn wait_for_scrape_result<'a, T, Fut, F>(
     driver: &'a WebDriver,
+    delay: Duration,
     f: F,
 ) -> Result<T, ScrapeError>
 where
@@ -263,7 +306,8 @@ where
     F: Fn(&'a WebDriver) -> Fut,
 {
     let mut last_error: Option<ScrapeError> = None;
-    for _ in 0..10 {
+    let num_tries = (10.0 / delay.as_secs_f32().ceil()) as i32;
+    for _ in 0..num_tries {
         match f(driver).await {
             Ok(result) => return Ok(result),
             Err(ScrapeError::WebDriverError(WebDriverError::StaleElementReference(_))) => {}
@@ -271,7 +315,7 @@ where
             Err(e @ ScrapeError::FatalParseError(_)) => return Err(e),
             Err(x) => last_error = Some(x),
         }
-        sleep(Duration::from_secs(1)).await;
+        sleep(delay).await;
     }
     Err(ScrapeError::timeout(
         "timeout while waiting for results",
