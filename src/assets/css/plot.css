@@ -89,6 +89,30 @@
     display: none;
 }
 
+.plot-controls-cancel {
+    display: none;
+
+    margin: 0 auto 10px auto;
+    background: #d46565;
+    cursor: pointer;
+    padding: 10px 20px;
+    color: white;
+    font-size: 1em;
+    border: none;
+}
+
+.plot-controls-cancel:hover {
+    background: #a85050;
+}
+
+.plot-controls-cancel:focus {
+    outline: 0;
+}
+
+.plot-loading .plot-controls-cancel {
+    display: block;
+}
+
 .plot-loading .plot-status-count,
 .plot-loaded .plot-status-count,
 .plot-error .plot-status-count {

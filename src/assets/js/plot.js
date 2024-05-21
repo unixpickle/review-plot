@@ -33,6 +33,9 @@ class ReviewPlot {
         status.appendChild(this.statusError);
         const controls = document.createElement('div');
         controls.className = 'plot-controls';
+        this.cancelButton = createControlsButton(controls, 'Cancel');
+        this.cancelButton.classList.add('plot-controls-cancel');
+        this.cancelButton.addEventListener('click', () => this.cancel());
         this.granularity = createControlsInput(controls, 'Granularity');
         this.granularity.type = 'range';
         this.granularity.min = '5';
@@ -80,9 +83,17 @@ class ReviewPlot {
             count += results.length;
             this.addItems(results);
             this.statusCount.textContent = `${count} results`;
-            this.query = null;
         };
         this.query.run();
+    }
+    cancel() {
+        if (!this.query) {
+            return;
+        }
+        this.query.cancel();
+        this.query = null;
+        this.setStatus('loaded');
+        this.statusCount.textContent = `${this.items.length} results (stopped)`;
     }
     setStatus(status) {
         for (let i = 0; i < this._element.classList.length; i++) {
@@ -197,6 +208,15 @@ function createControlsInput(container, name) {
     container.appendChild(field);
     return input;
 }
+function createControlsButton(container, value) {
+    const field = document.createElement('div');
+    field.className = 'plot-controls-field plot-controls-button-field';
+    const button = document.createElement('button');
+    button.textContent = value;
+    field.appendChild(button);
+    container.appendChild(field);
+    return button;
+}
 function createControlsSelect(container, name, namesAndValues) {
     const field = document.createElement('div');
     field.className = 'plot-controls-field plot-controls-select-field';
@@ -239,7 +259,7 @@ class ReviewQuery {
             const place = window.app.urlEncodeLocation();
             const url = `/api/reviews?url=${encodeURIComponent(this.url)}&${place}`;
             try {
-                const results = yield fetch(url);
+                const results = yield fetch(url, { signal: this.abort.signal });
                 const reader = results.body.getReader();
                 let buf = '';
                 while (true) {

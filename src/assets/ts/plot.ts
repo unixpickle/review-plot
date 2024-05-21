@@ -22,6 +22,7 @@ class ReviewPlot {
     private statusCount: HTMLLabelElement;
     private statusError: HTMLLabelElement;
 
+    private cancelButton: HTMLButtonElement;
     private granularity: HTMLInputElement;
     private dateRange: HTMLSelectElement;
 
@@ -53,6 +54,9 @@ class ReviewPlot {
 
         const controls = document.createElement('div');
         controls.className = 'plot-controls';
+        this.cancelButton = createControlsButton(controls, 'Cancel');
+        this.cancelButton.classList.add('plot-controls-cancel');
+        this.cancelButton.addEventListener('click', () => this.cancel());
         this.granularity = createControlsInput(controls, 'Granularity');
         this.granularity.type = 'range';
         this.granularity.min = '5';
@@ -104,9 +108,18 @@ class ReviewPlot {
             count += results.length;
             this.addItems(results);
             this.statusCount.textContent = `${count} results`;
-            this.query = null;
         };
         this.query.run();
+    }
+
+    private cancel() {
+        if (!this.query) {
+            return;
+        }
+        this.query.cancel();
+        this.query = null;
+        this.setStatus('loaded');
+        this.statusCount.textContent = `${this.items.length} results (stopped)`;
     }
 
     private setStatus(status: string) {
@@ -239,6 +252,16 @@ function createControlsInput(container: HTMLElement, name: string): HTMLInputEle
     return input;
 }
 
+function createControlsButton(container: HTMLElement, value: string): HTMLButtonElement {
+    const field = document.createElement('div');
+    field.className = 'plot-controls-field plot-controls-button-field';
+    const button = document.createElement('button');
+    button.textContent = value;
+    field.appendChild(button);
+    container.appendChild(field);
+    return button;
+}
+
 function createControlsSelect(
     container: HTMLElement,
     name: string,
@@ -295,7 +318,7 @@ class ReviewQuery {
         const place = window.app.urlEncodeLocation();
         const url = `/api/reviews?url=${encodeURIComponent(this.url)}&${place}`;
         try {
-            const results = await fetch(url);
+            const results = await fetch(url, { signal: this.abort.signal });
             const reader = results.body.getReader();
             let buf = '';
             while (true) {
