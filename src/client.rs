@@ -34,7 +34,7 @@ pub struct Review {
 
 #[derive(Debug, Default)]
 struct ReviewResult {
-    pub is_final: bool,
+    pub next_url: Option<String>,
     pub reviews: Vec<Review>,
 }
 
@@ -52,6 +52,7 @@ pub enum ScrapeError {
     FatalParseError(String),
     TimeoutError(String, Option<Box<ScrapeError>>),
     JsonError(serde_json::Error),
+    ReqwestError(reqwest::Error),
 }
 
 impl From<WebDriverError> for ScrapeError {
@@ -66,6 +67,12 @@ impl From<serde_json::Error> for ScrapeError {
     }
 }
 
+impl From<reqwest::Error> for ScrapeError {
+    fn from(value: reqwest::Error) -> Self {
+        ScrapeError::ReqwestError(value)
+    }
+}
+
 impl Display for ScrapeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -75,6 +82,7 @@ impl Display for ScrapeError {
             ScrapeError::TimeoutError(e, Some(x)) => write!(f, "TimeoutError({}, {})", e, x),
             ScrapeError::TimeoutError(e, None) => write!(f, "TimeoutError({})", e),
             ScrapeError::JsonError(e) => write!(f, "JsonError({})", e),
+            ScrapeError::ReqwestError(e) => write!(f, "ReqwestError({})", e),
         }
     }
 }
@@ -95,39 +103,32 @@ impl ScrapeError {
     }
 }
 
-pub struct ReviewIter<'a> {
-    client: &'a mut Client,
-    first: ReviewResult,
-    on_first: bool,
-    done: bool,
+pub struct ReviewIter {
+    next_result: Option<ReviewResult>,
+    next_url: Option<String>,
 }
 
-impl<'a> ReviewIter<'a> {
-    fn new(client: &'a mut Client, first: ReviewResult) -> Self {
+impl<'a> ReviewIter {
+    fn new(first: ReviewResult) -> Self {
         ReviewIter {
-            client: client,
-            first: first,
-            on_first: true,
-            done: false,
+            next_result: Some(first),
+            next_url: None,
         }
     }
 
     pub async fn next(&mut self) -> Result<Option<Vec<Review>>, ScrapeError> {
-        if self.done {
-            Ok(None)
-        } else if self.on_first {
-            self.on_first = false;
-            let first = take(&mut self.first);
-            if first.is_final {
-                self.done = true;
-            }
-            Ok(Some(first.reviews))
+        if let Some(result) = take(&mut self.next_result) {
+            self.next_url = result.next_url;
+            Ok(Some(result.reviews))
+        } else if let Some(url) = take(&mut self.next_url) {
+            let resp = reqwest::get(&url).await?;
+            let data: Vec<u8> = resp.bytes().await?.into();
+            let split = data.split(|x| *x == b'\n').last().unwrap();
+            let parsed = parse_logged_reviews(&url, &String::from_utf8_lossy(split))?;
+            self.next_url = parsed.next_url;
+            Ok(Some(parsed.reviews))
         } else {
-            let next = self.client.next_reviews().await?;
-            if next.is_final {
-                self.done = true;
-            }
-            Ok(Some(next.reviews))
+            Ok(None)
         }
     }
 }
@@ -153,7 +154,7 @@ impl Client {
     }
 
     pub async fn search(
-        &self,
+        &mut self,
         search: &str,
         location: &GeoLocation,
     ) -> Result<SearchResult, ScrapeError> {
@@ -176,11 +177,11 @@ impl Client {
         )
     }
 
-    pub async fn list_reviews<'a>(
-        &'a mut self,
+    pub async fn list_reviews(
+        &mut self,
         url: &str,
         location: &GeoLocation,
-    ) -> Result<ReviewIter<'a>, ScrapeError> {
+    ) -> Result<ReviewIter, ScrapeError> {
         set_location(&self.dev_tools, location).await?;
 
         // Intentionally clear any scripts on the page.
@@ -198,30 +199,15 @@ impl Client {
                     };
                     const origSend = XMLHttpRequest.prototype.send;
                     window.recordedReviewResponses = [];
-                    window.nextReviewURL = null;
-                    window.usingURL = false;
                     XMLHttpRequest.prototype.send = function() {
                         const oldCb = this.onreadystatechange;
                         this.onreadystatechange = function() {
                             if (this.readyState == 4 && this._url.includes('listugcposts')) {
-                                window.recordedReviewResponses.push(this.response);
-                                try {
-                                    // Attempt to parse results to find the next URL.
-                                    const lines = this.response.split('\n');
-                                    const parsed = JSON.parse(lines[lines.length - 1]);
-                                    const nextToken = parsed[1];
-                                    if (nextToken) {
-                                        const expr = /!2s[^!]*!/;
-                                        if (expr.test(this._url)) {
-                                            window.usingURL = true;
-                                            window.nextReviewURL = this._url.replace(
-                                                expr, "!2s" + encodeURIComponent(nextToken) + "!",
-                                            );
-                                        }
-                                    }
-                                } catch (e) {
-                                    // Fall back on scrolling to get results.
+                                let url = this._url;
+                                if (url.startsWith('/')) {
+                                    url = location.origin + url;
                                 }
+                                window.recordedReviewResponses.push([url, this.response]);
                             }
                             if (oldCb) {
                                 return oldCb.apply(this, arguments);
@@ -243,42 +229,7 @@ impl Client {
         let reviews =
             wait_for_scrape_result(&self.driver, Duration::from_secs(1), get_logged_reviews)
                 .await?;
-        Ok(ReviewIter::new(self, reviews))
-    }
-
-    async fn next_reviews(&self) -> Result<ReviewResult, ScrapeError> {
-        self.driver
-            .execute("window.recordedReviewResponses = [];", vec![])
-            .await?;
-        let scroll_code = r#"
-            if (window.usingURL) {
-                if (window.nextReviewURL) {
-                    const xhr = new XMLHttpRequest();
-                    xhr.open("GET", window.nextReviewURL, true);
-                    xhr.send(null);
-                    window.nextReviewURL = null;
-                }
-            } else {
-                const allDivs = Array.from(document.getElementsByTagName('div'));
-                const reviewItems = allDivs.filter((x) => !!x.getAttribute('data-review-id'));
-                const reviewContainer = reviewItems[0].parentElement.parentElement;
-                reviewContainer.scrollTop = 10000000;
-            }
-        "#;
-        self.driver.execute(scroll_code, vec![]).await?;
-        if let Ok(next) =
-            wait_for_scrape_result(&self.driver, Duration::from_millis(500), get_logged_reviews)
-                .await
-        {
-            Ok(next)
-        } else {
-            // Try to scroll one more time, since sometimes
-            // images took a while to load and prevented the
-            // scroll from triggering a reload.
-            self.driver.execute(scroll_code, vec![]).await?;
-            wait_for_scrape_result(&self.driver, Duration::from_millis(500), get_logged_reviews)
-                .await
-        }
+        Ok(ReviewIter::new(reviews))
     }
 
     pub async fn close(self) -> WebDriverResult<()> {
@@ -454,19 +405,17 @@ async fn get_logged_reviews(driver: &WebDriver) -> Result<ReviewResult, ScrapeEr
     let result = driver
         .execute("return window.recordedReviewResponses", vec![])
         .await?;
-    let results: Vec<String> = result.convert()?;
-    let mut is_final: bool = false;
+    let results: Vec<(String, String)> = result.convert()?;
     if results.len() != 0 {
         let mut parsed = Vec::new();
-        for result in results {
-            let parsed_result = parse_logged_reviews(&result)?;
-            if parsed_result.is_final {
-                is_final = true;
-            }
+        let mut next_url = None;
+        for (url, result) in results {
+            let parsed_result = parse_logged_reviews(&url, &result)?;
+            next_url = parsed_result.next_url;
             parsed.extend(parsed_result.reviews);
         }
         return Ok(ReviewResult {
-            is_final: is_final,
+            next_url: next_url,
             reviews: parsed,
         });
     }
@@ -475,15 +424,18 @@ async fn get_logged_reviews(driver: &WebDriver) -> Result<ReviewResult, ScrapeEr
     ));
 }
 
-fn parse_logged_reviews(response: &str) -> Result<ReviewResult, ScrapeError> {
+fn parse_logged_reviews(url: &str, response: &str) -> Result<ReviewResult, ScrapeError> {
     let last_line = response
         .split('\n')
         .last()
         .ok_or_else(|| ScrapeError::fatal_parse_error("expected newline in reviews"))?;
     let results: serde_json::Value = serde_json::from_str(last_line)?;
+    let next_token: Option<String> = as_optional_string(
+        "determine next URL",
+        get_array_index("determine next URL", &results, 1)?,
+    )?;
     let items = as_array("root list", &results)?;
     let mut reviews = Vec::new();
-    let is_final: bool = items[1].is_null();
     for (i, x) in items.into_iter().enumerate() {
         if x.is_null() || x.is_string() {
             continue;
@@ -598,8 +550,27 @@ fn parse_logged_reviews(response: &str) -> Result<ReviewResult, ScrapeError> {
             });
         }
     }
+    let next_url = if let Some(token) = next_token {
+        if let Some(idx) = url.find("!2s") {
+            let end_idx = url[idx + 1..].find("!").unwrap_or(url.len() - (idx + 1)) + idx + 1;
+            let encoded_token = token.replace("=", "%3d");
+            Some(format!(
+                "{}!2s{}{}",
+                &url[..idx],
+                encoded_token,
+                &url[end_idx..],
+            ))
+        } else {
+            return Err(ScrapeError::fatal_parse_error(&format!(
+                "failed to replace token in previous url: {}",
+                url
+            )));
+        }
+    } else {
+        None
+    };
     Ok(ReviewResult {
-        is_final: is_final,
+        next_url: next_url,
         reviews: reviews,
     })
 }
@@ -612,6 +583,20 @@ fn as_string<D: Display>(err_ctx: D, x: &serde_json::Value) -> Result<&str, Scra
             "expected JSON string: {}",
             err_ctx
         )))
+    }
+}
+
+fn as_optional_string<D: Display>(
+    err_ctx: D,
+    x: &serde_json::Value,
+) -> Result<Option<String>, ScrapeError> {
+    match x {
+        serde_json::Value::String(x) => Ok(Some(x.to_owned())),
+        serde_json::Value::Null => Ok(None),
+        _ => Err(ScrapeError::FatalParseError(format!(
+            "expected JSON string: {}",
+            err_ctx
+        ))),
     }
 }
 
@@ -640,7 +625,7 @@ fn as_array<D: Display>(
     }
 }
 
-fn get_array_index<'a, D: Display>(
+fn get_array_index<'a, D: Display + ?Sized>(
     err_ctx: &D,
     val: &'a serde_json::Value,
     index: i32,

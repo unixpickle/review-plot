@@ -67,7 +67,7 @@ pub async fn handle_search(
 ) -> Result<Vec<LocationInfo>, HandlerError> {
     let args = Query::parse(&request)?;
 
-    let client = pool.get().await?;
+    let mut client = pool.get().await?;
     let location = GeoLocation {
         latitude: args.get("latitude")?,
         longitude: args.get("longitude")?,
@@ -102,7 +102,9 @@ pub async fn handle_reviews(
     let (tx, rx) = channel::<Bytes>(1);
 
     tokio::spawn(async move {
-        match client.list_reviews(&url, &location).await {
+        let results = client.list_reviews(&url, &location).await;
+        drop(client);
+        match results {
             Err(e) => {
                 tx.send(Bytes::from(
                     serde_json::to_string(&json!({"error": format!("{}", e)})).unwrap() + "\n",
