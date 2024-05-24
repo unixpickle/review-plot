@@ -116,7 +116,7 @@ class ReviewPlot {
     }
     updateUI() {
         this.graph.textContent = '';
-        const items = this.averagedAndFilteredItems();
+        const [items, fit] = this.averagedAndFilteredItems();
         if (items.length == 0) {
             this.startDate.textContent = 'No data';
             this.endDate.textContent = 'No data';
@@ -138,6 +138,16 @@ class ReviewPlot {
             dot.setAttribute('cy', marginPercent(1 - (x.rating - 1) / 4));
             this.graph.appendChild(dot);
         });
+        if (items.length > 1) {
+            const fitLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            fitLine.setAttribute('x1', '0%');
+            fitLine.setAttribute('x2', '100%');
+            fitLine.setAttribute('y1', marginPercent(1 - (fit.bias - 1) / 4));
+            fitLine.setAttribute('y2', marginPercent(1 - (fit.bias + fit.slope - 1) / 4));
+            fitLine.setAttribute('stroke', '#555');
+            fitLine.setAttribute('line-width', '2');
+            this.graph.appendChild(fitLine);
+        }
     }
     firstAllowedTimestamp() {
         const val = this.dateRange.value;
@@ -159,15 +169,19 @@ class ReviewPlot {
     averagedAndFilteredItems() {
         const minTime = this.firstAllowedTimestamp();
         const items = this.items.filter((x) => x.timestamp >= minTime);
+        let fit = { bias: 2.5, slope: 0 };
         if (items.length < 3) {
-            return items;
+            return [items, fit];
         }
         const start = items[0].timestamp;
         const end = items[items.length - 1].timestamp;
         const span = end - start;
         if (span == 0) {
-            return items;
+            return [items, fit];
         }
+        const xs = items.map((x) => (x.timestamp - start) / Math.max(1e-8, span));
+        const ys = items.map((x) => x.rating);
+        fit = linearFit(xs, ys);
         const numWindows = parseInt(this.granularity.value);
         const windowSize = span / numWindows;
         const windowItems = [];
@@ -194,7 +208,7 @@ class ReviewPlot {
                 rating: ratingSum / items.length,
             });
         });
-        return result;
+        return [result, fit];
     }
 }
 function createControlsInput(container, name) {

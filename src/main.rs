@@ -19,7 +19,7 @@ use tokio::{net::TcpListener, signal};
 
 use crate::geolocate::IpLocator;
 
-const PAGE_MAPPING: [(&'static str, &'static str); 21] = [
+const PAGE_MAPPING: [(&'static str, &'static str); 24] = [
     ("", include_str!("assets/index.html")),
     ("/", include_str!("assets/index.html")),
     ("/404.html", include_str!("assets/404.html")),
@@ -38,6 +38,18 @@ const PAGE_MAPPING: [(&'static str, &'static str); 21] = [
     ("/js/plot.js", include_str!("assets/js/plot.js")),
     ("/js/plot.js.map", include_str!("assets/js/plot.js.map")),
     ("/ts/plot.ts", include_str!("assets/ts/plot.ts")),
+    (
+        "/js/least_squares.js",
+        include_str!("assets/js/least_squares.js"),
+    ),
+    (
+        "/js/least_squares.js.map",
+        include_str!("assets/js/least_squares.js.map"),
+    ),
+    (
+        "/ts/least_squares.ts",
+        include_str!("assets/ts/least_squares.ts"),
+    ),
     ("/css/page.css", include_str!("assets/css/page.css")),
     ("/css/location.css", include_str!("assets/css/location.css")),
     ("/css/search.css", include_str!("assets/css/search.css")),
