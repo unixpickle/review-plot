@@ -316,7 +316,7 @@ async fn decode_search_result(driver: &WebDriver) -> Result<SearchResult, Scrape
         return Ok(SearchResult::NotFound);
     }
 
-    // Look for an indication that multiple results were found.
+    // Look for a list of results.
     let destinations: Vec<LocationInfo> = driver
         .execute(
             "
@@ -333,6 +333,13 @@ async fn decode_search_result(driver: &WebDriver) -> Result<SearchResult, Scrape
                         if (href && name && href.startsWith('https://www.google.com/maps/place')) {
                             const lines = [];
                             const parent = link.parentElement;
+
+                            // Skip listings which are ads.
+                            const h1s = Array.from(parent.getElementsByTagName('h1'));
+                            if (h1s.some((x) => x.getAttribute('aria-label') == 'Sponsored')) {
+                                continue;
+                            }
+
                             const extension = parent.getElementsByClassName('section-subtitle-extension');
                             for (let i = 0; i < extension.length; i++) {
                                 let sibling = extension[i].nextSibling;
@@ -340,15 +347,33 @@ async fn decode_search_result(driver: &WebDriver) -> Result<SearchResult, Scrape
                                     const spans = sibling.getElementsByTagName('span');
                                     for (let j = 0; j < spans.length; j++) {
                                         const span = spans[j];
+
+                                        // Skip the hidden/image children of the reviews span.
                                         if (span.getAttribute('aria-hidden')) {
                                             continue;
                                         }
+
+                                        // Include reviews (count and stars) if possible.
+                                        if (span.getAttribute('role') == 'img') {
+                                            const label = span.getAttribute('aria-label');
+                                            if (label.toLowerCase().includes('star')) {
+                                                lines.push(label);
+                                                continue;
+                                            }
+                                        }
+
+                                        // Skip parent spans which contain children.
                                         if (span.getElementsByTagName('span').length) {
-                                            // We only want root pieces of text.
                                             continue;
                                         }
-                                        if (span.textContent.length > 1) {
-                                            lines.push(span.textContent);
+
+                                        const text = span.textContent;
+                                        if (text.length > 1) {
+                                            if (text.startsWith(' ⋅ ') && lines.length) {
+                                                lines[lines.length-1] += text;
+                                            } else {
+                                                lines.push(text);
+                                            }
                                         }
                                     }
                                     sibling = sibling.nextSibling;
