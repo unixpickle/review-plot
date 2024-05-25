@@ -191,31 +191,7 @@ impl Client {
         // Load script that will dump all requests.
         self.driver
             .execute(
-                r#"
-                    const origOpen = XMLHttpRequest.prototype.open;
-                    XMLHttpRequest.prototype.open = function(method, url) {
-                        this._url = url;
-                        return origOpen.apply(this, arguments);
-                    };
-                    const origSend = XMLHttpRequest.prototype.send;
-                    window.recordedReviewResponses = [];
-                    XMLHttpRequest.prototype.send = function() {
-                        const oldCb = this.onreadystatechange;
-                        this.onreadystatechange = function() {
-                            if (this.readyState == 4 && this._url.includes('listugcposts')) {
-                                let url = this._url;
-                                if (url.startsWith('/')) {
-                                    url = location.origin + url;
-                                }
-                                window.recordedReviewResponses.push([url, this.response]);
-                            }
-                            if (oldCb) {
-                                return oldCb.apply(this, arguments);
-                            }
-                        };
-                        origSend.apply(this, arguments);
-                    }
-                "#,
+                include_str!("injected_scripts/dump_review_requests.js"),
                 vec![],
             )
             .await?;
@@ -299,15 +275,7 @@ async fn decode_search_result(driver: &WebDriver) -> Result<SearchResult, Scrape
 
     let no_results: bool = driver
         .execute(
-            "
-            const divs = document.getElementsByTagName('div');
-            for (let i = 0; i < divs.length; i++) {
-                if (divs[i].textContent.startsWith('Google Maps can\\'t find')) {
-                    return true;
-                }
-            }
-            return false;
-            ",
+            include_str!("injected_scripts/check_empty_search.js"),
             vec![],
         )
         .await?
@@ -318,76 +286,7 @@ async fn decode_search_result(driver: &WebDriver) -> Result<SearchResult, Scrape
 
     // Look for a list of results.
     let destinations: Vec<LocationInfo> = driver
-        .execute(
-            "
-            const divs = document.getElementsByTagName('div');
-            const results = [];
-            for (let i = 0; i < divs.length; i++) {
-                const div = divs[i];
-                if ((div.getAttribute('aria-label') || '').startsWith('Results for')) {
-                    const links = div.getElementsByTagName('a');
-                    for (let j = 0; j < links.length; j++) {
-                        const link = links[j];
-                        const href = link.href;
-                        const name = link.getAttribute('aria-label');
-                        if (href && name && href.startsWith('https://www.google.com/maps/place')) {
-                            const lines = [];
-                            const parent = link.parentElement;
-
-                            // Skip listings which are ads.
-                            const h1s = Array.from(parent.getElementsByTagName('h1'));
-                            if (h1s.some((x) => x.getAttribute('aria-label') == 'Sponsored')) {
-                                continue;
-                            }
-
-                            const extension = parent.getElementsByClassName('section-subtitle-extension');
-                            for (let i = 0; i < extension.length; i++) {
-                                let sibling = extension[i].nextSibling;
-                                while (sibling) {
-                                    const spans = sibling.getElementsByTagName('span');
-                                    for (let j = 0; j < spans.length; j++) {
-                                        const span = spans[j];
-
-                                        // Skip the hidden/image children of the reviews span.
-                                        if (span.getAttribute('aria-hidden')) {
-                                            continue;
-                                        }
-
-                                        // Include reviews (count and stars) if possible.
-                                        if (span.getAttribute('role') == 'img') {
-                                            const label = span.getAttribute('aria-label');
-                                            if (label.toLowerCase().includes('star')) {
-                                                lines.push(label);
-                                                continue;
-                                            }
-                                        }
-
-                                        // Skip parent spans which contain children.
-                                        if (span.getElementsByTagName('span').length) {
-                                            continue;
-                                        }
-
-                                        const text = span.textContent;
-                                        if (text.length > 1) {
-                                            if (text.startsWith(' ⋅ ') && lines.length) {
-                                                lines[lines.length-1] += text;
-                                            } else {
-                                                lines.push(text);
-                                            }
-                                        }
-                                    }
-                                    sibling = sibling.nextSibling;
-                                }
-                            }
-                            results.push({name: name, url: href, extra: lines});
-                        }
-                    }
-                }
-            }
-            return results;
-            ",
-            vec![],
-        )
+        .execute(include_str!("injected_scripts/parse_search.js"), vec![])
         .await?
         .convert()?;
 
@@ -403,18 +302,7 @@ async fn click_more_reviews_button(driver: &WebDriver) -> Result<(), ScrapeError
     // javascript instead of the click() function.
     let result: bool = driver
         .execute(
-            r#"
-                let buttons = Array.from(document.getElementsByTagName('button')).filter((x) => {
-                    const attr = x.getAttribute('jsaction');
-                    return attr && attr.endsWith('reviewChart.moreReviews');
-                });
-                if (buttons.length) {
-                    buttons[0].click();
-                    return true;
-                } else {
-                    return false;
-                }
-            "#,
+            include_str!("injected_scripts/click_more_reviews.js"),
             vec![],
         )
         .await?
