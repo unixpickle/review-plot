@@ -119,9 +119,13 @@
     display: block;
 }
 
-.plot-loading .plot-status-count::before {
-    display: inline;
-    content: '⌛';
+.plot .loader {
+    display: none;
+}
+
+.plot-loading .loader {
+    display: block;
+    top: 125px;
 }
 
 .plot-status-error {

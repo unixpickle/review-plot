@@ -18,6 +18,8 @@ class ReviewPlot {
     private endDate: HTMLLabelElement;
     private graph: SVGSVGElement;
 
+    private loader: HTMLElement;
+
     private statusName: HTMLLabelElement;
     private statusCount: HTMLLabelElement;
     private statusError: HTMLLabelElement;
@@ -38,6 +40,9 @@ class ReviewPlot {
         this.graph = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         this.graph.setAttribute('class', 'plot-graph');
         this.graph.setAttribute('viewBox', '0 0 440 300');
+
+        this.loader = document.createElement('div');
+        this.loader.className = 'loader';
 
         const status = document.createElement('div');
         status.className = 'plot-status';
@@ -74,6 +79,7 @@ class ReviewPlot {
         this._element.appendChild(this.startDate);
         this._element.appendChild(this.endDate);
         this._element.appendChild(this.graph);
+        this._element.appendChild(this.loader);
         this._element.appendChild(status);
         this._element.appendChild(controls);
 

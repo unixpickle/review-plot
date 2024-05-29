@@ -6,6 +6,11 @@
     left: calc(50% - 25px);
     top: calc(50% - 25px);
     text-align: center;
+
+    animation-name: rotate;
+    animation-duration: 2s;
+    animation-iteration-count: infinite;
+    animation-timing-function: linear;
 }
 
 .loader::after {
@@ -13,4 +18,14 @@
     display: inline-block;
     font-size: 40px;
     vertical-align: middle;
+}
+
+@keyframes rotate {
+    from {
+        transform: rotate(0deg);
+    }
+
+    to {
+        transform: rotate(360deg);
+    }
 }
