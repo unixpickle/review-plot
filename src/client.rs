@@ -195,17 +195,21 @@ impl Client {
                 vec![],
             )
             .await?;
-        wait_for_scrape_result(
+        let count = wait_for_scrape_result(
             &self.driver,
             Duration::from_secs(1),
             click_more_reviews_button,
         )
         .await?;
 
-        let reviews =
-            wait_for_scrape_result(&self.driver, Duration::from_secs(1), get_logged_reviews)
-                .await?;
-        Ok(ReviewIter::new(reviews))
+        if count == 0 {
+            Ok(ReviewIter::new(ReviewResult::default()))
+        } else {
+            let reviews =
+                wait_for_scrape_result(&self.driver, Duration::from_secs(1), get_logged_reviews)
+                    .await?;
+            Ok(ReviewIter::new(reviews))
+        }
     }
 
     pub async fn close(self) -> WebDriverResult<()> {
@@ -297,21 +301,17 @@ async fn decode_search_result(driver: &WebDriver) -> Result<SearchResult, Scrape
     }
 }
 
-async fn click_more_reviews_button(driver: &WebDriver) -> Result<(), ScrapeError> {
+async fn click_more_reviews_button(driver: &WebDriver) -> Result<usize, ScrapeError> {
     // Click the 'more reviews' button even if it's offscreen by using
     // javascript instead of the click() function.
-    let result: bool = driver
+    let result: Option<usize> = driver
         .execute(
             include_str!("injected_scripts/click_more_reviews.js"),
             vec![],
         )
         .await?
         .convert()?;
-    if result {
-        Ok(())
-    } else {
-        Err(ScrapeError::parse_error("no 'more reviews' button found"))
-    }
+    result.ok_or_else(|| ScrapeError::parse_error("no 'more reviews' button found"))
 }
 
 async fn get_logged_reviews(driver: &WebDriver) -> Result<ReviewResult, ScrapeError> {

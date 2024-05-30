@@ -173,7 +173,7 @@ class ReviewPlot {
         const minTime = this.firstAllowedTimestamp();
         const items = this.items.filter((x) => x.timestamp >= minTime);
         let fit = { bias: 2.5, slope: 0 };
-        if (items.length < 3) {
+        if (items.length < 2) {
             return [items, fit];
         }
         const start = items[0].timestamp;
