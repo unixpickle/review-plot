@@ -119,6 +119,14 @@
     display: block;
 }
 
+.plot-status-fit {
+    display: none;
+}
+
+.plot-status-fit-available {
+    display: block;
+}
+
 .plot .loader {
     display: none;
 }

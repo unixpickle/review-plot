@@ -28,10 +28,13 @@ class ReviewPlot {
         this.statusName.className = 'plot-status-name';
         this.statusCount = document.createElement('label');
         this.statusCount.className = 'plot-status-count';
+        this.statusFit = document.createElement('label');
+        this.statusFit.className = 'plot-status-fit';
         this.statusError = document.createElement('label');
         this.statusError.className = 'plot-status-error';
         status.appendChild(this.statusName);
         status.appendChild(this.statusCount);
+        status.appendChild(this.statusFit);
         status.appendChild(this.statusError);
         const controls = document.createElement('div');
         controls.className = 'plot-controls';
@@ -123,8 +126,11 @@ class ReviewPlot {
         if (items.length == 0) {
             this.startDate.textContent = 'No data';
             this.endDate.textContent = 'No data';
+            this.statusFit.classList.remove('plot-status-fit-available');
             return;
         }
+        this.statusFit.textContent = `Fit: ${fit.slope.toFixed(3)}*x + ${fit.bias.toFixed(3)}`;
+        this.statusFit.classList.add('plot-status-fit-available');
         const start = new Date(items[0].timestamp * 1000);
         const end = new Date(items[items.length - 1].timestamp * 1000);
         this.startDate.textContent = formatDate(start);
@@ -142,14 +148,23 @@ class ReviewPlot {
             this.graph.appendChild(dot);
         });
         if (items.length > 1) {
-            const fitLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-            fitLine.setAttribute('x1', '0%');
-            fitLine.setAttribute('x2', '100%');
-            fitLine.setAttribute('y1', marginPercent(1 - (fit.bias - 1) / 4));
-            fitLine.setAttribute('y2', marginPercent(1 - (fit.bias + fit.slope - 1) / 4));
-            fitLine.setAttribute('stroke', '#555');
-            fitLine.setAttribute('line-width', '2');
-            this.graph.appendChild(fitLine);
+            const y1 = fit.bias + fit.slope * (-5 / 90);
+            const y2 = fit.bias + fit.slope * 95 / 90;
+            const createLine = () => {
+                const fitLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                fitLine.setAttribute('x1', '0%');
+                fitLine.setAttribute('x2', '100%');
+                fitLine.setAttribute('y1', marginPercent(1 - (y1 - 1) / 4));
+                fitLine.setAttribute('y2', marginPercent(1 - (y2 - 1) / 4));
+                fitLine.setAttribute('stroke', '#65bcd4');
+                fitLine.setAttribute('stroke-width', '4');
+                return fitLine;
+            };
+            const bg = createLine();
+            bg.setAttribute('stroke', '#000');
+            bg.setAttribute('stroke-width', '5');
+            this.graph.appendChild(bg);
+            this.graph.appendChild(createLine());
         }
     }
     firstAllowedTimestamp() {
