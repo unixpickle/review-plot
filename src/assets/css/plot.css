@@ -89,11 +89,8 @@
     display: none;
 }
 
-.plot-controls-cancel {
-    display: none;
-
+.plot-controls-button-field>button {
     margin: 0 auto 10px auto;
-    background: #d46565;
     cursor: pointer;
     padding: 10px 20px;
     color: white;
@@ -101,8 +98,22 @@
     border: none;
 }
 
+.plot-controls-cancel {
+    display: none;
+    background: #d46565;
+}
+
 .plot-controls-cancel:hover {
     background: #a85050;
+}
+
+.plot-controls-download {
+    display: none;
+    background: #65bcd4;
+}
+
+.plot-controls-download:hover {
+    background: #4c91a4;
 }
 
 .plot-controls-cancel:focus {
@@ -110,6 +121,11 @@
 }
 
 .plot-loading .plot-controls-cancel {
+    display: block;
+}
+
+.plot-loading .plot-controls-download,
+.plot-loaded .plot-controls-download {
     display: block;
 }
 

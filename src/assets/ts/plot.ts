@@ -26,6 +26,7 @@ class ReviewPlot {
     private statusError: HTMLLabelElement;
 
     private cancelButton: HTMLButtonElement;
+    private downloadButton: HTMLButtonElement;
     private granularity: HTMLInputElement;
     private dateRange: HTMLSelectElement;
 
@@ -66,6 +67,9 @@ class ReviewPlot {
         this.cancelButton = createControlsButton(controls, 'Cancel');
         this.cancelButton.classList.add('plot-controls-cancel');
         this.cancelButton.addEventListener('click', () => this.cancel());
+        this.downloadButton = createControlsButton(controls, 'Download');
+        this.downloadButton.classList.add('plot-controls-download');
+        this.downloadButton.addEventListener('click', () => this.download());
         this.granularity = createControlsInput(controls, 'Granularity');
         this.granularity.type = 'range';
         this.granularity.min = '5';
@@ -130,6 +134,27 @@ class ReviewPlot {
         this.query = null;
         this.setStatus('loaded');
         this.statusCount.textContent = `${this.items.length} results (stopped)`;
+    }
+
+    private download() {
+        let data = (
+            'timestamp,rating,author,content\n' +
+            this.items.map((x) => {
+                const fields = [
+                    Math.round(x.timestamp).toString(), x.rating.toFixed(1), x.author, x.content,
+                ];
+                return fields.map(escapeCSVField).join(',');
+            }).join('\n')
+        );
+        const blob = new Blob([data], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'data.csv';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     }
 
     private setStatus(status: string) {
@@ -339,6 +364,14 @@ function formatDate(date: Date): string {
     month = (month.length == 1) ? '0' + month : month;
     day = (day.length == 1) ? '0' + day : day;
     return `${month}/${day}/${year}`;
+}
+
+function escapeCSVField(str: string) {
+    if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+        const escapedStr = str.replace('"', '""');
+        return `"${escapedStr}"`;
+    }
+    return str;
 }
 
 function marginPercent(frac: number): string {
