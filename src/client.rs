@@ -380,9 +380,9 @@ fn parse_logged_reviews(url: &str, response: &str) -> Result<ReviewResult, Scrap
                     get_array_index(
                         &metadata_err,
                         get_array_index(&metadata_err, review_metadata, 4)?,
-                        0,
+                        5,
                     )?,
-                    4,
+                    0,
                 )?,
             )?
             .to_owned();

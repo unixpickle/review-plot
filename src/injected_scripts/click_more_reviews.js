@@ -4,6 +4,19 @@ let buttons = Array.from(document.getElementsByTagName('button')).filter((x) => 
 });
 if (buttons.length) {
     buttons[0].click();
+
+    // If the window is too short, there will be an overview above the actual
+    // reviews, and we need to scroll down to see the first review.
+    setTimeout(() => {
+        const btns = document.getElementsByTagName('button');
+        const sortReviewsButton = Array.from(btns).filter((x) => {
+            return x.getAttribute('aria-label') == 'Sort reviews'
+        });
+        if (sortReviewsButton.length) {
+            sortReviewsButton[0].parentElement.parentElement.parentElement.scrollTop = 10000;
+        }
+    }, 1000);
+
     const count = parseInt(buttons[0].textContent.split(' '));
     if (isNaN(count)) {
         return 1;
